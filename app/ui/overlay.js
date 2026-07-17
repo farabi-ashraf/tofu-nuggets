@@ -10,7 +10,22 @@ if (!window.__TAURI__) {
   throw new Error("__TAURI__ not injected");
 }
 const { listen } = window.__TAURI__.event;
-nameEl.textContent = "ready";
+const { invoke } = window.__TAURI__.core;
+
+function render({ name, path, html }) {
+  nameEl.textContent = name;
+  pathEl.textContent = path;
+  pathEl.title = path;
+  noteEl.replaceChildren(sanitize(html));
+}
+
+// The window may be created lazily right before a show event that fires
+// while this page is still loading — pull the current payload on startup.
+invoke("get_current_nugget")
+  .then((payload) => {
+    if (payload) render(payload);
+  })
+  .catch(() => {});
 
 // Nugget HTML comes from the user's own sidecar files, but sanitize anyway:
 // strip script/style/iframe and inline event handlers.
@@ -28,10 +43,4 @@ function sanitize(html) {
   return tpl.content;
 }
 
-listen("nugget:show", (event) => {
-  const { name, path, html } = event.payload;
-  nameEl.textContent = name;
-  pathEl.textContent = path;
-  pathEl.title = path;
-  noteEl.replaceChildren(sanitize(html));
-});
+listen("nugget:show", (event) => render(event.payload));

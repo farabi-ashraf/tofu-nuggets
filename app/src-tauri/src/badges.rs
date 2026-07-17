@@ -17,7 +17,7 @@ use crate::storage;
 const REFRESH_TIMER_ID: usize = 1;
 const REFRESH_MS: u32 = 2000;
 const BADGE_R: i32 = 6; // radius in px
-// Warm accent, premultiplied at full alpha below.
+                        // Warm accent, premultiplied at full alpha below.
 const BADGE_RGBA: (u8, u8, u8, u8) = (0xF5, 0x8F, 0x3C, 0xE6);
 
 pub fn spawn() {
@@ -73,7 +73,10 @@ fn run(uia: DesktopUia) -> Result<()> {
 
         // Lives for the whole process; the window procedure owns it via
         // GWLP_USERDATA.
-        let ctx = Box::into_raw(Box::new(Ctx { uia, visible: false }));
+        let ctx = Box::into_raw(Box::new(Ctx {
+            uia,
+            visible: false,
+        }));
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
 
         SetTimer(Some(hwnd), REFRESH_TIMER_ID, REFRESH_MS, None);

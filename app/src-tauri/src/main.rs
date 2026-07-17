@@ -3,85 +3,48 @@
 mod badges;
 mod desktop;
 mod hover;
+mod index;
+mod overlay;
 mod storage;
+mod watcher;
 
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use std::sync::{Arc, Mutex};
+
+use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .manage(hover::CurrentNugget::default())
+        .invoke_handler(tauri::generate_handler![hover::get_current_nugget])
         .setup(|app| {
-            let overlay = WebviewWindowBuilder::new(
-                app,
-                "overlay",
-                WebviewUrl::App("overlay.html".into()),
-            )
-            .title("Tofu Nuggets Overlay")
-            .inner_size(340.0, 240.0)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .visible(false)
-            .background_color(tauri::utils::config::Color(0, 0, 0, 0))
-            .build()?;
+            // Warm overlay at startup; the hover engine destroys it after
+            // idle and recreates it on demand.
+            overlay::create(app.handle())?;
 
-            // Never steal focus from whatever the user is doing.
-            overlay.set_focusable(false)?;
-
-            // Force the WebView2 canvas fully transparent; Tauri's transparent
-            // flag alone leaves an opaque theme-colored background behind the
-            // page (observed on WebView2 / Win11).
-            #[cfg(target_os = "windows")]
-            overlay.with_webview(|webview| unsafe {
-                use webview2_com::Microsoft::Web::WebView2::Win32::{
-                    ICoreWebView2Controller2, COREWEBVIEW2_COLOR,
-                };
-                use windows_core_061::Interface;
-                let controller = webview.controller();
-                if let Ok(c2) = controller.cast::<ICoreWebView2Controller2>() {
-                    let _ = c2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR {
-                        A: 0,
-                        R: 0,
-                        G: 0,
-                        B: 0,
-                    });
-                }
-            })?;
-
-            // Rounded corners + dark titlebar hints via DWM (Win11).
-            #[cfg(target_os = "windows")]
-            {
-                use windows::Win32::Foundation::HWND;
-                use windows::Win32::Graphics::Dwm::{
-                    DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-                };
-                let hwnd = HWND(overlay.hwnd()?.0);
-                unsafe {
-                    let dark: i32 = 1;
-                    let _ = DwmSetWindowAttribute(
-                        hwnd,
-                        DWMWA_USE_IMMERSIVE_DARK_MODE,
-                        &dark as *const _ as _,
-                        std::mem::size_of_val(&dark) as u32,
-                    );
-                    let corners = DWMWCP_ROUND.0;
-                    let _ = DwmSetWindowAttribute(
-                        hwnd,
-                        DWMWA_WINDOW_CORNER_PREFERENCE,
-                        &corners as *const _ as _,
-                        std::mem::size_of_val(&corners) as u32,
-                    );
-                }
+            let roots = desktop::desktop_dirs();
+            let db_path = app.path().app_data_dir()?.join("index.db");
+            let mut idx = index::NuggetIndex::open(&db_path)?;
+            if let Err(e) = idx.rebuild(&roots) {
+                eprintln!("index rebuild failed: {e}");
             }
+            let idx = Arc::new(Mutex::new(idx));
+            watcher::spawn(roots, idx.clone());
+            app.manage(idx);
 
             hover::spawn(app.handle().clone());
             badges::spawn();
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Background app: keep running when the overlay window (often the
+            // only window) is destroyed for idle release.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

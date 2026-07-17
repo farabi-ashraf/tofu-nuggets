@@ -35,8 +35,11 @@
                                         Deferred: right-edge flip test, native infotip
                                         suppression, WebView2 idle-release (see ARCHITECTURE
                                         perf notes — measured 379 MB warm, release mandatory).
-2. Sidecar storage + index           → verify: unit tests — write/read/rename tracking;
-                                        rebuild index from sidecars matches
+2. Sidecar storage + index ✅        → verified 2026-07-17: 10 unit tests pass (write/read
+                                        roundtrip, rename moves sidecar, cross-dir move, index
+                                        rebuild skips stale sidecars, watcher event handling).
+                                        Bonus: WebView2 idle-release shipped + live-verified
+                                        (6 procs → 0 after idle, recreate on hover ~1 s).
 3. Editor (TipTap) + hotkey          → verify: create/edit note on selected icon; todo check
                                         state persists; URL opens browser
 4. File links                        → verify: nugget:// link opens Explorer at target;

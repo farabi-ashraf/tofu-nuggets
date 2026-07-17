@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const SIDECAR_DIR: &str = ".nuggets";
+#[allow(dead_code)] // stamped by the editor from Milestone 3
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +53,125 @@ pub fn write_nugget(item: &Path, nugget: &Nugget) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     hide_dir(dir);
     std::fs::write(&sc, serde_json::to_string_pretty(nugget)?)
+}
+
+/// Plain-text preview of a nugget's HTML for list views: tags stripped,
+/// whitespace collapsed, clipped to 120 chars.
+pub fn preview_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(120).collect()
+}
+
+/// Keep the sidecar in step when its item is renamed (same parent) or moved.
+/// Folder nuggets travel inside the folder, so only files need this.
+pub fn rename_sidecar(old_item: &Path, new_item: &Path) -> std::io::Result<()> {
+    if new_item.is_dir() {
+        return Ok(());
+    }
+    let (Some(old_sc), Some(new_sc)) = (sidecar_path_for_file(old_item), sidecar_path(new_item))
+    else {
+        return Ok(());
+    };
+    if !old_sc.is_file() {
+        return Ok(());
+    }
+    if let Some(dir) = new_sc.parent() {
+        std::fs::create_dir_all(dir)?;
+        hide_dir(dir);
+    }
+    std::fs::rename(old_sc, new_sc)
+}
+
+/// Sidecar location assuming the item is (was) a file — used when the old
+/// path no longer exists so `is_dir()` can't be asked.
+fn sidecar_path_for_file(item: &Path) -> Option<PathBuf> {
+    let parent = item.parent()?;
+    let name = item.file_name()?.to_string_lossy();
+    Some(parent.join(SIDECAR_DIR).join(format!("{name}.nugget.json")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nugget(html: &str) -> Nugget {
+        Nugget {
+            schema: SCHEMA_VERSION,
+            html: html.into(),
+            created_ms: 1,
+            modified_ms: 1,
+        }
+    }
+
+    #[test]
+    fn write_read_roundtrip_file_and_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("doc.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_nugget(&file, &nugget("<p>hi</p>")).unwrap();
+        assert!(has_nugget(&file));
+        assert_eq!(read_nugget(&file).unwrap().html, "<p>hi</p>");
+
+        let folder = tmp.path().join("stuff");
+        std::fs::create_dir(&folder).unwrap();
+        write_nugget(&folder, &nugget("folder note")).unwrap();
+        // Folder sidecar lives inside the folder -> travels with it.
+        assert!(folder.join(SIDECAR_DIR).join("_self.nugget.json").is_file());
+        assert_eq!(read_nugget(&folder).unwrap().html, "folder note");
+    }
+
+    #[test]
+    fn rename_moves_file_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("old.txt");
+        std::fs::write(&old, b"x").unwrap();
+        write_nugget(&old, &nugget("keep me")).unwrap();
+
+        let new = tmp.path().join("new.txt");
+        std::fs::rename(&old, &new).unwrap();
+        rename_sidecar(&old, &new).unwrap();
+
+        assert!(!has_nugget(&old));
+        assert_eq!(read_nugget(&new).unwrap().html, "keep me");
+    }
+
+    #[test]
+    fn rename_into_other_dir_moves_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let old = tmp.path().join("a.txt");
+        std::fs::write(&old, b"x").unwrap();
+        write_nugget(&old, &nugget("travels")).unwrap();
+
+        let new = sub.join("a.txt");
+        std::fs::rename(&old, &new).unwrap();
+        rename_sidecar(&old, &new).unwrap();
+        assert_eq!(read_nugget(&new).unwrap().html, "travels");
+    }
+
+    #[test]
+    fn preview_strips_tags_and_clips() {
+        assert_eq!(
+            preview_text("<p><b>Hello</b> world</p><ul><li>item</li></ul>"),
+            "Hello world item"
+        );
+        let long = format!("<p>{}</p>", "x".repeat(300));
+        assert_eq!(preview_text(&long).chars().count(), 120);
+    }
 }
 
 /// Best-effort FILE_ATTRIBUTE_HIDDEN on the .nuggets directory.

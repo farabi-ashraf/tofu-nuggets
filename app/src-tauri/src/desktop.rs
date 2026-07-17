@@ -99,7 +99,7 @@ impl DesktopUia {
             };
             parent
                 .CurrentClassName()
-                .map(|c| c.to_string() == "SysListView32")
+                .map(|c| c == "SysListView32")
                 .unwrap_or(false)
         }
     }
@@ -108,13 +108,8 @@ impl DesktopUia {
 pub fn find_desktop_listview() -> Option<HWND> {
     unsafe {
         let progman = FindWindowW(w!("Progman"), PCWSTR::null()).ok()?;
-        let mut defview = FindWindowExW(
-            Some(progman),
-            None,
-            w!("SHELLDLL_DefView"),
-            PCWSTR::null(),
-        )
-        .ok();
+        let mut defview =
+            FindWindowExW(Some(progman), None, w!("SHELLDLL_DefView"), PCWSTR::null()).ok();
 
         if defview.is_none() {
             let mut found: Option<HWND> = None;

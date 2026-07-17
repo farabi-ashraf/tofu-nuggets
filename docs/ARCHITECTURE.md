@@ -53,8 +53,15 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
 
 - Per-directory hidden folder: `<dir>\.nuggets\<filename>.nugget.json` (set FILE_ATTRIBUTE_HIDDEN). One JSON per annotated item: rich text content (TipTap JSON), created/modified timestamps, outbound links, schema version.
 - Folder notes: `<dir>\.nuggets\_self.nugget.json` inside the folder itself → note travels when the folder is copied/synced.
-- Rename/move within a watched dir: track via `ReadDirectoryChangesW` (rename events) and update sidecar names. Moves out of watched scope: note travels only if `.nuggets` travels (folder notes do; file notes in a different parent don't — accept for MVP, document it).
-- App maintains a lightweight SQLite index (path → nugget) purely as a cache for the "show all tagged items" main window; sidecars are the source of truth, index is rebuildable.
+- Rename/move within a watched dir: `notify` crate watcher (wraps `ReadDirectoryChangesW`) renames the sidecar and updates the index. Windows delivers same-dir renames as one two-path event; cross-dir moves arrive as remove+create, so a move out of watched scope leaves a stale sidecar behind (harmless: index rebuilds skip sidecars whose item is missing). Folder notes always travel inside their folder.
+- App maintains a lightweight SQLite index (`rusqlite`, DB in app-data dir) purely as a cache for the "show all tagged items" main window; sidecars are the source of truth, index is rebuilt from a full scan at startup and kept fresh by the watcher.
+- **Implemented + tested (Milestone 2)**: `storage.rs` / `index.rs` / `watcher.rs`, 10 unit tests.
+
+### WebView2 idle release (implemented, Milestone 2)
+
+The overlay window is destroyed after `TOFU_IDLE_RELEASE_SECS` (default 300) without a panel shown, dropping the ~380 MB WebView2 process tree to zero; it is recreated on the next hover (~1 s cold start). Traps discovered:
+- Destroying the app's only window triggers Tauri's exit-on-all-windows-closed — a background app must intercept `RunEvent::ExitRequested` (with `code.is_none()`) and `prevent_exit()`.
+- Window creation works from a worker thread, but a freshly created page can miss a `nugget:show` emit — the page pulls the current payload via a `get_current_nugget` command on load (state stashed before emit).
 
 ### 5. Main window ("all nuggets" view)
 

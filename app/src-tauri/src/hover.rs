@@ -5,15 +5,16 @@
 //! hit-test fires once per cursor rest (~400 ms), never continuously. While a
 //! panel is visible, leave-detection is cheap rect math, not UIA.
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State};
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use crate::desktop::{self, DesktopUia};
-use crate::storage;
+use crate::{overlay, storage};
 
 const POLL_MS: u64 = 100;
 const DEBOUNCE_MS: u128 = 400;
@@ -23,11 +24,28 @@ const PANEL_W: f64 = 340.0;
 const PANEL_H: f64 = 240.0;
 const PANEL_GAP: i32 = 8;
 
+fn idle_release_secs() -> u64 {
+    std::env::var("TOFU_IDLE_RELEASE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300)
+}
+
 #[derive(Clone, Serialize)]
-struct ShowPayload {
+pub struct ShowPayload {
     name: String,
     path: String,
     html: String,
+}
+
+/// Last payload sent to the panel; freshly (re)created panel pages pull it
+/// on load, since an emit can fire before their listener registers.
+#[derive(Default)]
+pub struct CurrentNugget(Mutex<Option<ShowPayload>>);
+
+#[tauri::command]
+pub fn get_current_nugget(state: State<CurrentNugget>) -> Option<ShowPayload> {
+    state.0.lock().ok().and_then(|g| g.clone())
 }
 
 pub fn spawn(app: AppHandle) {
@@ -54,9 +72,20 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
     // Icon + panel rects currently showing, plus when the cursor left them.
     let mut shown: Option<(RECT, RECT)> = None;
     let mut outside_since: Option<Instant> = None;
+    // Panel-hidden timestamp driving WebView2 idle release.
+    let mut idle_since = Instant::now();
+    let idle_release = Duration::from_secs(idle_release_secs());
 
     loop {
         std::thread::sleep(Duration::from_millis(POLL_MS));
+
+        // Idle release: destroy the (hidden) overlay window so WebView2's
+        // process tree is reclaimed; recreated on next hover. Window teardown
+        // must happen on the main thread.
+        if shown.is_none() && overlay::exists(app) && idle_since.elapsed() >= idle_release {
+            let ah = app.clone();
+            let _ = app.run_on_main_thread(move || overlay::destroy(&ah));
+        }
 
         let mut pt = POINT::default();
         if unsafe { GetCursorPos(&mut pt) }.is_err() {
@@ -80,6 +109,7 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
                     hide_panel(app);
                     shown = None;
                     outside_since = None;
+                    idle_since = Instant::now();
                 }
             }
             continue; // while shown, no new hit-tests needed
@@ -92,9 +122,15 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
         }
         tested_at_rest = true;
 
-        let Some(icon) = uia.icon_at(pt) else { continue };
-        let Some(path) = icon.path.as_ref() else { continue };
-        let Some(nugget) = storage::read_nugget(path) else { continue };
+        let Some(icon) = uia.icon_at(pt) else {
+            continue;
+        };
+        let Some(path) = icon.path.as_ref() else {
+            continue;
+        };
+        let Some(nugget) = storage::read_nugget(path) else {
+            continue;
+        };
 
         if let Some(panel_r) = show_panel(
             app,
@@ -118,10 +154,8 @@ fn point_in_hover_zone(pt: POINT, icon: &RECT, panel: &RECT) -> bool {
         && pt.x <= icon.right + pad
         && pt.y >= icon.top - pad
         && pt.y <= icon.bottom + pad;
-    let in_panel = pt.x >= panel.left
-        && pt.x <= panel.right
-        && pt.y >= panel.top
-        && pt.y <= panel.bottom;
+    let in_panel =
+        pt.x >= panel.left && pt.x <= panel.right && pt.y >= panel.top && pt.y <= panel.bottom;
     in_icon || in_panel
 }
 
@@ -148,11 +182,15 @@ fn panel_rect(icon: &RECT, pw: i32, ph: i32) -> RECT {
 
 /// Returns the panel's physical rect when shown.
 fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option<RECT> {
-    let win = app.get_webview_window("overlay")?;
+    let win = overlay::get_or_create(app).ok()?;
     let sf = win.scale_factor().unwrap_or(1.0);
     let pw = (PANEL_W * sf).round() as i32;
     let ph = (PANEL_H * sf).round() as i32;
     let r = panel_rect(icon_rect, pw, ph);
+    // Stash for freshly created pages, then emit for already-loaded ones.
+    if let Ok(mut cur) = app.state::<CurrentNugget>().0.lock() {
+        *cur = Some(payload.clone());
+    }
     let _ = app.emit("nugget:show", payload);
     let _ = win.set_size(PhysicalSize::new(pw as u32, ph as u32));
     let _ = win.set_position(PhysicalPosition::new(r.left, r.top));
@@ -161,7 +199,7 @@ fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option
 }
 
 fn hide_panel(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("overlay") {
+    if let Some(win) = app.get_webview_window(overlay::LABEL) {
         let _ = win.hide();
     }
 }
