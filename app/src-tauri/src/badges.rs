@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::appstate::Paused;
 use crate::desktop::{self, DesktopUia};
-use crate::storage;
+use crate::{settings, storage};
 
 const REFRESH_TIMER_ID: usize = 1;
 const REFRESH_MS: u32 = 2000;
@@ -21,7 +21,7 @@ const BADGE_R: i32 = 6; // radius in px
                         // Warm accent, premultiplied at full alpha below.
 const BADGE_RGBA: (u8, u8, u8, u8) = (0xF5, 0x8F, 0x3C, 0xE6);
 
-pub fn spawn(paused: Paused) {
+pub fn spawn(paused: Paused, settings: settings::Shared) {
     std::thread::Builder::new()
         .name("badge-layer".into())
         .spawn(move || {
@@ -33,7 +33,7 @@ pub fn spawn(paused: Paused) {
                     return;
                 }
             };
-            if let Err(e) = run(uia, paused) {
+            if let Err(e) = run(uia, paused, settings) {
                 eprintln!("badge layer failed: {e}");
             }
         })
@@ -44,9 +44,10 @@ struct Ctx {
     uia: DesktopUia,
     visible: bool,
     paused: Paused,
+    settings: settings::Shared,
 }
 
-fn run(uia: DesktopUia, paused: Paused) -> Result<()> {
+fn run(uia: DesktopUia, paused: Paused, settings: settings::Shared) -> Result<()> {
     unsafe {
         let class_name = w!("TofuNuggetsBadgeLayer");
         let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)?;
@@ -79,6 +80,7 @@ fn run(uia: DesktopUia, paused: Paused) -> Result<()> {
             uia,
             visible: false,
             paused,
+            settings,
         }));
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
 
@@ -124,8 +126,23 @@ fn refresh(hwnd: HWND, ctx: &mut Ctx) {
         return;
     }
 
-    // Cheap re-apply so infotips stay off across Explorer restarts.
+    // Cheap re-apply so infotips stay off across Explorer restarts. Kept
+    // independent of the badge toggle: the panel must stay the sole hover
+    // surface even when dots are switched off.
     desktop::suppress_desktop_infotips();
+
+    // Badge dots disabled in settings: keep the layer hidden but leave
+    // infotip suppression (above) running.
+    let badges_on = ctx.settings.lock().map(|s| s.badges).unwrap_or(true);
+    if !badges_on {
+        if ctx.visible {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            ctx.visible = false;
+        }
+        return;
+    }
 
     let Ok(icons) = ctx.uia.list_icons() else {
         return;

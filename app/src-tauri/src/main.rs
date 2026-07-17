@@ -9,6 +9,7 @@ mod index;
 mod links;
 mod mainwin;
 mod overlay;
+mod settings;
 mod storage;
 mod tray;
 mod watcher;
@@ -50,7 +51,9 @@ fn main() {
             links::open_in_explorer,
             links::open_external,
             mainwin::list_nuggets,
-            mainwin::edit_nugget
+            mainwin::edit_nugget,
+            settings::get_settings,
+            settings::set_settings
         ])
         .setup(|app| {
             // Warm overlay at startup; the hover engine destroys it after
@@ -72,9 +75,12 @@ fn main() {
             watcher::spawn(roots, idx.clone());
             app.manage(idx);
 
+            let settings: settings::Shared = Arc::new(Mutex::new(settings::load(app.handle())));
+            app.manage(settings.clone());
+
             let paused = app.state::<Paused>().inner().clone();
             hover::spawn(app.handle().clone(), paused.clone());
-            badges::spawn(paused);
+            badges::spawn(paused, settings);
 
             tray::build(app.handle())?;
 

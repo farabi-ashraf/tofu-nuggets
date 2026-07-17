@@ -4,8 +4,8 @@
 
 ## Status
 
-- **Phase**: Milestone 5 complete — main window (all-nuggets list), tray, pause, autostart. Verified list + Edit-opens-editor; background app.
-- **Next step**: Milestone 6 — settings + accessibility (font size, panel scale, themes, Reduced Motion / High Contrast). Carry-over TODOs: right-edge panel flip test, editor idle-release (~380 MB persists once opened), autostart-survives-reboot check.
+- **Phase**: Milestone 6 complete — settings + accessibility. `settings.json` store, shared `theme.js`, font size / panel scale / dark-light-system theme / High Contrast (solid colors) / Reduced Motion / badge toggle, tray "Settings…". Verified live against real CSS via dev-server webview + 5 new unit tests (15 total).
+- **Next step**: Milestone 7 — polish + installer (MSI/NSIS); measure RAM/CPU against ARCHITECTURE budget on a fresh VM. Carry-over TODOs: right-edge panel flip test, editor idle-release (~380 MB persists once opened), autostart-survives-reboot check, title-bar theme sync (light theme still has DWM-dark title bar — cosmetic).
 - **Build note**: frontend is Vite-built now — run `npm run build` in `app/ui` BEFORE `cargo build` (assets embed from `ui/dist`).
 - **Demo state**: two seeded nuggets live on the real desktop — `Works` folder and `Untitled-1.psd` (sidecars under `OneDrive\Desktop`). Run `app/src-tauri/target/debug/tofu-nuggets.exe`, hover those icons on the desktop.
 
@@ -30,6 +30,7 @@
 | Visual cue | Badge layer: click-through layered window, native-drawn dots on tagged icons | docs/ARCHITECTURE.md §6 |
 | Performance | Hard budget: ~0% CPU idle, ~15–20 MB core RAM, WebView2 released after idle timeout, icon count must not affect hover cost | docs/ARCHITECTURE.md |
 | Accessibility | MVP includes font size S–XL, panel scale, dark/light/system themes, Reduced Motion + High Contrast respect | docs/ARCHITECTURE.md |
+| Settings storage | `settings.json` in app-data dir; serde-default backfill; applied live to all windows via `theme.js` + `settings:changed` | docs/ARCHITECTURE.md (Accessibility & theming) |
 
 ## Owner preferences (from conversations)
 
@@ -39,6 +40,7 @@
 
 ## Session log
 
+- **2026-07-18**: Milestone 6. `settings.rs` (Settings struct, serde-default backfill, panel_scale clamp 1.0–1.5, get/set_settings, `settings:changed` emit, settings window). Shared `ui/theme.js` applies `--font-scale` / `--panel-scale` + `data-theme`/`data-motion`/`data-contrast` to `<html>`, imported by every entry; effective motion/contrast = user toggle OR OS media query. overlay/editor/main/settings CSS got light + high-contrast (solid `--panel-bg`) + reduced-motion (`animation:none`) blocks. Panel scale is dual: `hover.rs` resizes overlay window by `dpi*panel_scale`, CSS also scales its fonts. `badges.rs` reads `settings.badges` (infotip suppression kept independent). Tray gained "Settings…". Verified against real CSS over the Vite dev-server webview (in-app Browser pane can't run JS on `file://` — serves stale static snapshots; http origin works): font XL×panel1.5 → 14→30.45px, light theme, HC `--panel-bg #000`+white border, reduced-motion animation-name none; settings window layout; app boots clean as background. 15/15 tests, clippy no new warnings. **Note**: 2 pre-existing clippy warnings in index.rs:206 + storage.rs:107 (untouched files) left per surgical rule.
 - **2026-07-17**: Premise discussed. Market research done (Notezilla closest competitor; gap confirmed). Docs created: CLAUDE.md, FEASIBILITY, ARCHITECTURE, MVP. Added: performance budget, badge layer, accessibility settings, this memory file.
 - **2026-07-17 (2)**: Git init + docs committed. Rust (GNU) installed. Milestone 0 spike built and passed: `spikes/hover-detect` — scan (51 icons, paths resolved incl. OneDrive/Public desktop), simtest 51/51 PASS with desktop visible, covered-window negative case verified. Findings folded into ARCHITECTURE.md.
 - **2026-07-17 (7)**: Milestone 5. Main window (mainwin.rs) lists nuggets from index (list_nuggets), filter, Open/Edit per row, reloads on nuggets:changed. Tray (tray.rs): open/pause/autostart/quit. Shared Paused flag (appstate.rs) gates hover+badges. tauri-plugin-autostart. **Key gotcha discovered & documented**: WebviewWindowBuilder::build() DEADLOCKS on the async command thread AND inside run_on_main_thread; only works from a plain std::thread (like the hover engine) or the hotkey handler. edit_nugget spawns a std::thread. Verified Edit→editor via window enumeration + trace (GUI pixel-clicking was unreliable due to multi-window desktop; enumeration is the reliable probe).

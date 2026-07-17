@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use crate::appstate::Paused;
 use crate::desktop::{self, DesktopUia};
-use crate::{overlay, storage};
+use crate::{overlay, settings, storage};
 
 const POLL_MS: u64 = 100;
 const DEBOUNCE_MS: u128 = 400;
@@ -195,8 +195,15 @@ fn panel_rect(icon: &RECT, pw: i32, ph: i32) -> RECT {
 fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option<RECT> {
     let win = overlay::get_or_create(app).ok()?;
     let sf = win.scale_factor().unwrap_or(1.0);
-    let pw = (PANEL_W * sf).round() as i32;
-    let ph = (PANEL_H * sf).round() as i32;
+    // User panel zoom (1.0–1.5); the page also scales its font by the same
+    // factor (--panel-scale) so the whole panel grows together.
+    let zoom = app
+        .state::<settings::Shared>()
+        .lock()
+        .map(|s| s.panel_scale)
+        .unwrap_or(1.0);
+    let pw = (PANEL_W * sf * zoom).round() as i32;
+    let ph = (PANEL_H * sf * zoom).round() as i32;
     let r = panel_rect(icon_rect, pw, ph);
     // Stash for freshly created pages, then emit for already-loaded ones.
     if let Ok(mut cur) = app.state::<CurrentNugget>().0.lock() {

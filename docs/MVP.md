@@ -58,9 +58,17 @@
                                         registered. Pause flag wired into hover+badges; tray
                                         toggles pause/autostart/quit. Autostart-survives-reboot
                                         not yet verified on this machine.
-6. Settings + accessibility          → verify: font size / panel scale / theme apply live;
-                                        High Contrast falls back to solid colors; Reduced
-                                        Motion disables animations; badges toggle off
+6. Settings + accessibility ✅       → verified 2026-07-18: settings.json store (serde-default
+                                        backfill, panel_scale clamp) — 5 unit tests (15 total).
+                                        theme.js applies font-scale/panel-scale/theme/motion/
+                                        contrast to <html> live. Verified against the real CSS
+                                        (dev-server webview): font XL×panel 1.5 → 14→30.45px;
+                                        light theme; High Contrast → solid --panel-bg #000 +
+                                        white border; Reduced Motion → animation-name none.
+                                        Settings window renders; app boots clean as background
+                                        with the new state wiring + badge toggle. Tray gained
+                                        "Settings…". Deferred: title-bar theme sync (cosmetic),
+                                        live tray-click + badge-off not machine-clicked.
 7. Polish + installer (MSI/NSIS)     → verify: clean install/uninstall on fresh VM; RAM/CPU
                                         measured against ARCHITECTURE.md performance budget
 ```

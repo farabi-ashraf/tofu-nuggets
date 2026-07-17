@@ -1,6 +1,8 @@
 // Overlay panel renderer. The hover engine (Rust) emits `nugget:show` with
 // { name, path, html } right before it positions and shows this window.
 
+import "./theme.js";
+
 const nameEl = document.getElementById("icon-name");
 const pathEl = document.getElementById("icon-path");
 const noteEl = document.getElementById("note-content");

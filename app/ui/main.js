@@ -1,5 +1,7 @@
 // Main window: the "all nuggets" list from the SQLite index.
 
+import "./theme.js";
+
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 

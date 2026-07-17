@@ -7,16 +7,18 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::appstate::Paused;
-use crate::mainwin;
+use crate::{mainwin, settings};
 
 const OPEN: &str = "open";
 const PAUSE: &str = "pause";
+const SETTINGS: &str = "settings";
 const AUTOSTART: &str = "autostart";
 const QUIT: &str = "quit";
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, OPEN, "Open Tofu Nuggets", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, PAUSE, "Pause hover", true, false, None::<&str>)?;
+    let settings = MenuItem::with_id(app, SETTINGS, "Settings…", true, None::<&str>)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(
         app,
@@ -30,7 +32,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
 
-    let menu = Menu::with_items(app, &[&open, &sep1, &pause, &autostart, &sep2, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&open, &sep1, &pause, &settings, &autostart, &sep2, &quit],
+    )?;
 
     TrayIconBuilder::with_id("tofu-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -43,6 +48,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 let paused = app.state::<Paused>().toggle();
                 eprintln!("hover {}", if paused { "paused" } else { "resumed" });
             }
+            SETTINGS => settings::show(app),
             AUTOSTART => {
                 let mgr = app.autolaunch();
                 let now_on = mgr.is_enabled().unwrap_or(false);

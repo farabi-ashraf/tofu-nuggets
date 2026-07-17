@@ -113,14 +113,43 @@ The pitch is "light layer on top of the desktop" — these are commitments, not 
 
 ## Accessibility & theming
 
-Settings (persisted in app config, applied to overlay panel, editor, and main window):
+**Implemented in Milestone 6.** Settings live in `settings.json` in the app-data
+dir (source of truth), modeled by `settings.rs::Settings` with `#[serde(default)]`
+so a partial/old file backfills from defaults rather than failing to load.
+`panel_scale` is clamped to 1.0–1.5 in `Settings::normalized()`. Two commands:
+`get_settings` (pull on load) and `set_settings` (persist + `emit("settings:changed")`).
 
-- **Font size**: S / M / L / XL for overlay panel text (editor and main window follow).
-- **Panel scale**: overlay panel size adjustable up to a cap (~1.5×), keeps on-screen positioning logic.
-- **Themes**: dark / light / follow-system for MVP; theme system designed so more themes slot in later (CSS custom properties, one theme file per theme).
-- **System respect**: honor Windows Reduced Motion (disable panel fade/slide), High Contrast mode (fall back from acrylic to solid high-contrast colors), WCAG AA contrast minimum in both themes.
-- **Keyboard access**: global hotkey flow means notes are creatable/editable without mouse; editor and main window fully keyboard-navigable.
-- Badge size follows font-size setting so the cue stays visible at higher scales.
+- **Live apply**: a shared `ui/theme.js`, imported by every window entry, is the
+  single applier. On load (and on each `settings:changed`) it writes to `<html>`:
+  `--font-scale`, `--panel-scale`, and the attributes `data-theme` (dark|light),
+  `data-motion` (full|reduced), `data-contrast` (normal|high). All window CSS is
+  authored as `:root` variable defaults + `:root[data-theme="light"]` /
+  `[data-contrast="high"]` overrides + a `[data-motion="reduced"] *` rule that
+  kills `animation`/`transition`.
+- **Font size**: S/M/L/XL → scale 0.85/1.0/1.2/1.45 (mapping lives in `theme.js`;
+  Rust never needs the numeric). Applies to overlay, editor, main, settings.
+- **Panel scale (overlay only, dual knob)**: `hover.rs::show_panel` sizes the
+  window `PANEL_W/H * dpi * panel_scale`, and overlay CSS multiplies its fonts by
+  `var(--panel-scale)` too, so the whole panel zooms together. Positioning/edge-flip
+  logic is unchanged (operates on the final physical rect).
+- **Themes**: dark / light / system. `system` is resolved in `theme.js` via
+  `matchMedia('(prefers-color-scheme: dark)')` and re-resolves on OS change. More
+  themes slot in as additional `data-theme` blocks.
+- **System respect + override**: effective reduced-motion / high-contrast =
+  user toggle **OR** the matching OS media query (`prefers-reduced-motion`,
+  `prefers-contrast: more`, `forced-colors: active`). So the OS setting is honored
+  and the toggle can additionally force it on. High contrast drops the translucent
+  glass for solid colors (`--panel-bg: #000` / `#fff`, opaque border).
+- **Badge toggle**: `settings.badges`, read by the badge layer each 2 s refresh;
+  when off the layer hides but infotip suppression keeps running (the panel must
+  stay the sole hover surface even with dots off).
+- **Settings window**: opened from the tray (`Settings…`), same build path as the
+  main window; itself imports `theme.js` so it previews changes live.
+- **Keyboard access**: global hotkey flow means notes are creatable/editable
+  without mouse; editor and main window fully keyboard-navigable.
+- **Known follow-up**: window title bars stay DWM dark regardless of light theme
+  (content themes correctly); syncing the immersive-dark attribute to theme is
+  deferred cosmetic polish.
 
 ## Process model
 

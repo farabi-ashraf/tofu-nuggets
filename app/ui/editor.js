@@ -2,6 +2,7 @@
 // window with a target item; we pull it on load (same pattern as the
 // overlay) and save via the save_nugget command.
 
+import "./theme.js";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";

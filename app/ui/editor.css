@@ -14,6 +14,37 @@
   --font-scale: 1;
 }
 
+:root[data-theme="light"] {
+  --bg: #f4f5f8;
+  --panel: #ffffff;
+  --fg: rgba(20, 22, 30, 0.95);
+  --fg-dim: rgba(20, 22, 30, 0.5);
+  --border: rgba(0, 0, 0, 0.14);
+}
+
+:root[data-contrast="high"] {
+  --bg: #000;
+  --panel: #000;
+  --fg: #fff;
+  --fg-dim: #fff;
+  --accent: #ffb000;
+  --border: #fff;
+}
+
+:root[data-theme="light"][data-contrast="high"] {
+  --bg: #fff;
+  --panel: #fff;
+  --fg: #000;
+  --fg-dim: #000;
+  --accent: #a15c00;
+  --border: #000;
+}
+
+:root[data-motion="reduced"] * {
+  animation: none !important;
+  transition: none !important;
+}
+
 html,
 body {
   height: 100%;
