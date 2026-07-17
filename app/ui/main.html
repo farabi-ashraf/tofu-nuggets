@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tofu Nuggets</title>
+  <link rel="stylesheet" href="main.css" />
+</head>
+<body>
+  <header class="app-head">
+    <div class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      <h1>Tofu Nuggets</h1>
+    </div>
+    <input id="filter" type="search" placeholder="Filter notes…" aria-label="Filter notes" />
+  </header>
+  <main>
+    <ul id="list" class="nugget-list"></ul>
+    <p id="empty" class="empty" hidden>
+      No notes yet. Hover a desktop icon and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> to add one.
+    </p>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

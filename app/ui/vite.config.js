@@ -8,6 +8,7 @@ export default defineConfig({
       input: {
         overlay: resolve(__dirname, "overlay.html"),
         editor: resolve(__dirname, "editor.html"),
+        main: resolve(__dirname, "main.html"),
       },
     },
   },

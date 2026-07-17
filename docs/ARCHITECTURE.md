@@ -72,9 +72,20 @@ The overlay window is destroyed after `TOFU_IDLE_RELEASE_SECS` (default 300) wit
 - Destroying the app's only window triggers Tauri's exit-on-all-windows-closed — a background app must intercept `RunEvent::ExitRequested` (with `code.is_none()`) and `prevent_exit()`.
 - Window creation works from a worker thread, but a freshly created page can miss a `nugget:show` emit — the page pulls the current payload via a `get_current_nugget` command on load (state stashed before emit).
 
-### 5. Main window ("all nuggets" view)
+### 5. Main window ("all nuggets" view) — implemented (Milestone 5)
 
-Standard Tauri window listing all indexed nuggets: name, path, note preview, last edited. Click → open Explorer at item; edit button → editor window.
+Tauri window (`mainwin.rs`) listing indexed nuggets via `list_nuggets`: name, path, preview, last-edited, with a live text filter. Each row: **Open** (`open_in_explorer`) and **Edit** (`edit_nugget`). Reloads on the `nuggets:changed` event emitted by `save_nugget`. Reachable from the tray.
+
+**Threading trap (important):** `WebviewWindowBuilder::build()` *deadlocks* when called from a Tauri async command thread, and also from inside a `run_on_main_thread` closure. It works from a plain worker `std::thread` (the same context the hover engine uses to recreate the overlay). So `edit_nugget` spawns a short-lived `std::thread` to open the editor. The global-hotkey path builds directly (its handler thread is build-safe).
+
+Follow-up: the editor window currently persists once created (~380 MB WebView2). Add editor idle-release like the overlay later; out of scope for M5.
+
+### Tray, pause, autostart (Milestone 5)
+
+- `tray.rs`: tray icon + menu (Open / Pause hover / Start with Windows / Quit). Left-click opens the main window.
+- Pause: a shared `Paused` (`AtomicBool` in `appstate.rs`) checked by the hover engine (hides panel, skips detection) and the badge layer (hides badges). Toggled from the tray.
+- Autostart: `tauri-plugin-autostart` (registry Run key), toggled from the tray; state read back to check the menu item.
+- Background app: no window at startup; `RunEvent::ExitRequested` already prevents exit when windows close (added in M2 for idle release), so closing the main window leaves the app in the tray.
 
 ### 6. Badge layer (visual cue for tagged icons)
 

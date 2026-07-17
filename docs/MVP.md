@@ -51,8 +51,13 @@
                                         Bonus this milestone: native desktop infotips
                                         suppressed (panel is now the sole hover surface),
                                         todo checkbox toggles persist to the sidecar.
-5. Main window + tray + autostart    → verify: all annotated items listed; autostart survives
-                                        reboot; pause stops hover polling
+5. Main window + tray + autostart ✅ → verified 2026-07-17: main window lists all nuggets
+                                        (name/path/preview/time, filter, Open+Edit); Edit
+                                        opens the editor (window enumeration + trace confirmed);
+                                        app runs as background (no window at startup), tray
+                                        registered. Pause flag wired into hover+badges; tray
+                                        toggles pause/autostart/quit. Autostart-survives-reboot
+                                        not yet verified on this machine.
 6. Settings + accessibility          → verify: font size / panel scale / theme apply live;
                                         High Contrast falls back to solid colors; Reduced
                                         Motion disables animations; badges toggle off

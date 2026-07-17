@@ -4,8 +4,8 @@
 
 ## Status
 
-- **Phase**: Milestone 4 complete — file links E2E-verified (editor picker → nugget:// link → panel click opens Explorer). Also shipped: infotip suppression, panel todo-checkbox persistence, panel/editor web-link open.
-- **Next step**: Milestone 5 — main window (all-nuggets list from the index), tray icon (open/pause/quit), autostart. Carry-over TODO: right-edge panel flip test.
+- **Phase**: Milestone 5 complete — main window (all-nuggets list), tray, pause, autostart. Verified list + Edit-opens-editor; background app.
+- **Next step**: Milestone 6 — settings + accessibility (font size, panel scale, themes, Reduced Motion / High Contrast). Carry-over TODOs: right-edge panel flip test, editor idle-release (~380 MB persists once opened), autostart-survives-reboot check.
 - **Build note**: frontend is Vite-built now — run `npm run build` in `app/ui` BEFORE `cargo build` (assets embed from `ui/dist`).
 - **Demo state**: two seeded nuggets live on the real desktop — `Works` folder and `Untitled-1.psd` (sidecars under `OneDrive\Desktop`). Run `app/src-tauri/target/debug/tofu-nuggets.exe`, hover those icons on the desktop.
 
@@ -41,6 +41,7 @@
 
 - **2026-07-17**: Premise discussed. Market research done (Notezilla closest competitor; gap confirmed). Docs created: CLAUDE.md, FEASIBILITY, ARCHITECTURE, MVP. Added: performance budget, badge layer, accessibility settings, this memory file.
 - **2026-07-17 (2)**: Git init + docs committed. Rust (GNU) installed. Milestone 0 spike built and passed: `spikes/hover-detect` — scan (51 icons, paths resolved incl. OneDrive/Public desktop), simtest 51/51 PASS with desktop visible, covered-window negative case verified. Findings folded into ARCHITECTURE.md.
+- **2026-07-17 (7)**: Milestone 5. Main window (mainwin.rs) lists nuggets from index (list_nuggets), filter, Open/Edit per row, reloads on nuggets:changed. Tray (tray.rs): open/pause/autostart/quit. Shared Paused flag (appstate.rs) gates hover+badges. tauri-plugin-autostart. **Key gotcha discovered & documented**: WebviewWindowBuilder::build() DEADLOCKS on the async command thread AND inside run_on_main_thread; only works from a plain std::thread (like the hover engine) or the hotkey handler. edit_nugget spawns a std::thread. Verified Edit→editor via window enumeration + trace (GUI pixel-clicking was unreliable due to multi-window desktop; enumeration is the reliable probe).
 - **2026-07-17 (6)**: Milestone 4. links.rs (open_in_explorer via ShellExecuteW /select, open_external for http). tauri-plugin-dialog for file/folder picker; editor 📄/📁 buttons insert nugget:// links. Panel + editor link-click handlers. Fixed the big UX blocker: native desktop infotips were covering the panel — now cleared via LVS_EX_INFOTIP on the desktop listview (re-applied each badge refresh). Panel todo checkboxes persist. E2E: link click opened Explorer (Cabinet 1→2), checkbox toggle wrote data-checked=true to sidecar.
 - **2026-07-17 (5)**: Milestone 3. ui/ became npm+Vite package (TipTap deps). Editor window (dark, undecorated, drag-region titlebar, toolbar: bold/italic/bullets/todos/links), global hotkey Ctrl+Shift+N via tauri-plugin-global-shortcut (cursor target → UIA selection fallback), save_nugget command preserves created_ms + upserts index. E2E: SendKeys typed into real editor, saved, panel verified showing edit.
 - **2026-07-17 (4)**: Milestone 2. Added rusqlite index (rebuildable cache, app-data DB), notify-based watcher (sidecar follows renames; deletes drop index entry but keep sidecar), preview extraction, 10 unit tests. WebView2 idle-release implemented; two traps: destroying the only window exits Tauri (prevent_exit needed), fresh pages miss emits (get_current_nugget pull on load). Cycle live-verified.

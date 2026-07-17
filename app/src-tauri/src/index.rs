@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 use crate::storage;
 
@@ -13,9 +14,7 @@ pub struct NuggetIndex {
     conn: Connection,
 }
 
-// Read side is consumed by the main window (Milestone 5); tests cover it now.
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Entry {
     pub path: String,
     pub name: String,
@@ -90,7 +89,6 @@ impl NuggetIndex {
         );
     }
 
-    #[allow(dead_code)]
     pub fn all(&self) -> rusqlite::Result<Vec<Entry>> {
         let mut stmt = self.conn.prepare(
             "SELECT path, name, preview, modified_ms FROM nuggets ORDER BY modified_ms DESC",

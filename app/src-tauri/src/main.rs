@@ -1,19 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appstate;
 mod badges;
 mod desktop;
 mod editor;
 mod hover;
 mod index;
 mod links;
+mod mainwin;
 mod overlay;
 mod storage;
+mod tray;
 mod watcher;
 
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
+
+use appstate::Paused;
 
 fn main() {
     let hotkey: Shortcut = "ctrl+shift+n".parse().expect("valid hotkey");
@@ -30,14 +36,21 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(hover::CurrentNugget::default())
         .manage(editor::CurrentEdit::default())
+        .manage(Paused::default())
         .invoke_handler(tauri::generate_handler![
             hover::get_current_nugget,
             editor::get_current_edit,
             editor::save_nugget,
             links::open_in_explorer,
-            links::open_external
+            links::open_external,
+            mainwin::list_nuggets,
+            mainwin::edit_nugget
         ])
         .setup(|app| {
             // Warm overlay at startup; the hover engine destroys it after
@@ -59,8 +72,11 @@ fn main() {
             watcher::spawn(roots, idx.clone());
             app.manage(idx);
 
-            hover::spawn(app.handle().clone());
-            badges::spawn();
+            let paused = app.state::<Paused>().inner().clone();
+            hover::spawn(app.handle().clone(), paused.clone());
+            badges::spawn(paused);
+
+            tray::build(app.handle())?;
 
             Ok(())
         })

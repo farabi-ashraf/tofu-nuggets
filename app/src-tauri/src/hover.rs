@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State};
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
+use crate::appstate::Paused;
 use crate::desktop::{self, DesktopUia};
 use crate::{overlay, storage};
 
@@ -48,7 +49,7 @@ pub fn get_current_nugget(state: State<CurrentNugget>) -> Option<ShowPayload> {
     state.0.lock().ok().and_then(|g| g.clone())
 }
 
-pub fn spawn(app: AppHandle) {
+pub fn spawn(app: AppHandle, paused: Paused) {
     std::thread::Builder::new()
         .name("hover-engine".into())
         .spawn(move || {
@@ -60,12 +61,12 @@ pub fn spawn(app: AppHandle) {
                     return;
                 }
             };
-            run(&app, &uia);
+            run(&app, &uia, &paused);
         })
         .expect("spawn hover engine");
 }
 
-fn run(app: &AppHandle, uia: &DesktopUia) {
+fn run(app: &AppHandle, uia: &DesktopUia, paused: &Paused) {
     let mut last_pos = POINT { x: -1, y: -1 };
     let mut rest_since: Option<Instant> = None;
     let mut tested_at_rest = false;
@@ -78,6 +79,16 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
 
     loop {
         std::thread::sleep(Duration::from_millis(POLL_MS));
+
+        // Paused from the tray: hide any panel and do no detection.
+        if paused.is_paused() {
+            if shown.take().is_some() {
+                hide_panel(app);
+                outside_since = None;
+                idle_since = Instant::now();
+            }
+            continue;
+        }
 
         // Idle release: destroy the (hidden) overlay window so WebView2's
         // process tree is reclaimed; recreated on next hover. Window teardown

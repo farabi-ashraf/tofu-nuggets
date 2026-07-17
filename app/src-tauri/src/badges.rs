@@ -11,6 +11,7 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, W
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::appstate::Paused;
 use crate::desktop::{self, DesktopUia};
 use crate::storage;
 
@@ -20,10 +21,10 @@ const BADGE_R: i32 = 6; // radius in px
                         // Warm accent, premultiplied at full alpha below.
 const BADGE_RGBA: (u8, u8, u8, u8) = (0xF5, 0x8F, 0x3C, 0xE6);
 
-pub fn spawn() {
+pub fn spawn(paused: Paused) {
     std::thread::Builder::new()
         .name("badge-layer".into())
-        .spawn(|| {
+        .spawn(move || {
             desktop::init_com_for_thread();
             let uia = match DesktopUia::new() {
                 Ok(u) => u,
@@ -32,7 +33,7 @@ pub fn spawn() {
                     return;
                 }
             };
-            if let Err(e) = run(uia) {
+            if let Err(e) = run(uia, paused) {
                 eprintln!("badge layer failed: {e}");
             }
         })
@@ -42,9 +43,10 @@ pub fn spawn() {
 struct Ctx {
     uia: DesktopUia,
     visible: bool,
+    paused: Paused,
 }
 
-fn run(uia: DesktopUia) -> Result<()> {
+fn run(uia: DesktopUia, paused: Paused) -> Result<()> {
     unsafe {
         let class_name = w!("TofuNuggetsBadgeLayer");
         let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)?;
@@ -76,6 +78,7 @@ fn run(uia: DesktopUia) -> Result<()> {
         let ctx = Box::into_raw(Box::new(Ctx {
             uia,
             visible: false,
+            paused,
         }));
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
 
@@ -109,9 +112,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 fn refresh(hwnd: HWND, ctx: &mut Ctx) {
-    // Badges only while the desktop is foreground; hidden otherwise so the
-    // topmost layer never draws over other applications.
-    if !desktop::desktop_is_foreground() {
+    // Badges only while the desktop is foreground and not paused; hidden
+    // otherwise so the topmost layer never draws over other applications.
+    if ctx.paused.is_paused() || !desktop::desktop_is_foreground() {
         if ctx.visible {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_HIDE);

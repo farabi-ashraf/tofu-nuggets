@@ -32,6 +32,7 @@ pub fn get_current_edit(state: State<CurrentEdit>) -> Option<EditPayload> {
 
 #[tauri::command]
 pub fn save_nugget(
+    app: AppHandle,
     path: String,
     html: String,
     index: State<Arc<Mutex<NuggetIndex>>>,
@@ -54,6 +55,8 @@ pub fn save_nugget(
     if let Ok(idx) = index.lock() {
         idx.upsert_item(&item);
     }
+    // Let an open main window refresh its list.
+    let _ = app.emit("nuggets:changed", ());
     Ok(())
 }
 
@@ -84,7 +87,19 @@ pub fn open_for_target(app: &AppHandle) {
         );
         return;
     };
+    open_editor(app, &icon.name, path);
+}
 
+/// Open the editor for an explicit path (from the main window list).
+pub fn open_for_path(app: &AppHandle, path: std::path::PathBuf) {
+    let name = path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    open_editor(app, &name, path);
+}
+
+fn open_editor(app: &AppHandle, name: &str, path: std::path::PathBuf) {
     // The quick-view panel would fight the editor visually.
     if let Some(win) = app.get_webview_window(overlay::LABEL) {
         let _ = win.hide();
@@ -94,7 +109,7 @@ pub fn open_for_target(app: &AppHandle) {
         .map(|n| n.html)
         .unwrap_or_default();
     let payload = EditPayload {
-        name: icon.name.clone(),
+        name: name.to_string(),
         path: path.display().to_string(),
         html,
     };
