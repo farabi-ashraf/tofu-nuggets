@@ -1,11 +1,16 @@
 // Overlay panel renderer. The hover engine (Rust) emits `nugget:show` with
 // { name, path, html } right before it positions and shows this window.
 
-const { listen } = window.__TAURI__.event;
-
 const nameEl = document.getElementById("icon-name");
 const pathEl = document.getElementById("icon-path");
 const noteEl = document.getElementById("note-content");
+
+if (!window.__TAURI__) {
+  nameEl.textContent = "tauri api missing";
+  throw new Error("__TAURI__ not injected");
+}
+const { listen } = window.__TAURI__.event;
+nameEl.textContent = "ready";
 
 // Nugget HTML comes from the user's own sidecar files, but sanitize anyway:
 // strip script/style/iframe and inline event handlers.

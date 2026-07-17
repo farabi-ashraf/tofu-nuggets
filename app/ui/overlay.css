@@ -27,6 +27,9 @@ body {
 }
 
 .panel {
+  background: linear-gradient(160deg, rgba(30, 32, 44, 0.78), rgba(18, 20, 28, 0.82));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
   height: 100%;
   padding: 14px 16px;
   display: flex;

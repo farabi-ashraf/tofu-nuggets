@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -18,8 +18,9 @@ use crate::storage;
 const POLL_MS: u64 = 100;
 const DEBOUNCE_MS: u128 = 400;
 const LEAVE_GRACE_MS: u128 = 250;
-const PANEL_W: i32 = 340;
-const PANEL_H: i32 = 240;
+// Logical units; scaled by the window's DPI factor at show time.
+const PANEL_W: f64 = 340.0;
+const PANEL_H: f64 = 240.0;
 const PANEL_GAP: i32 = 8;
 
 #[derive(Clone, Serialize)]
@@ -50,8 +51,8 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
     let mut last_pos = POINT { x: -1, y: -1 };
     let mut rest_since: Option<Instant> = None;
     let mut tested_at_rest = false;
-    // Icon rect currently showing a panel, plus when the cursor left it.
-    let mut shown_rect: Option<RECT> = None;
+    // Icon + panel rects currently showing, plus when the cursor left them.
+    let mut shown: Option<(RECT, RECT)> = None;
     let mut outside_since: Option<Instant> = None;
 
     loop {
@@ -69,15 +70,15 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
             tested_at_rest = false;
         }
 
-        // Leave detection for a visible panel: icon rect + panel strip union.
-        if let Some(r) = shown_rect {
-            if point_in_hover_zone(pt, &r) {
+        // Leave detection for a visible panel: icon rect + panel rect union.
+        if let Some((icon_r, panel_r)) = shown {
+            if point_in_hover_zone(pt, &icon_r, &panel_r) {
                 outside_since = None;
             } else {
                 let out = outside_since.get_or_insert_with(Instant::now);
                 if out.elapsed().as_millis() >= LEAVE_GRACE_MS {
                     hide_panel(app);
-                    shown_rect = None;
+                    shown = None;
                     outside_since = None;
                 }
             }
@@ -95,7 +96,7 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
         let Some(path) = icon.path.as_ref() else { continue };
         let Some(nugget) = storage::read_nugget(path) else { continue };
 
-        show_panel(
+        if let Some(panel_r) = show_panel(
             app,
             &icon.rect,
             ShowPayload {
@@ -103,20 +104,20 @@ fn run(app: &AppHandle, uia: &DesktopUia) {
                 path: path.display().to_string(),
                 html: nugget.html,
             },
-        );
-        shown_rect = Some(icon.rect);
-        outside_since = None;
+        ) {
+            shown = Some((icon.rect, panel_r));
+            outside_since = None;
+        }
     }
 }
 
-/// Icon rect expanded toward the panel so moving onto the panel keeps it open.
-fn point_in_hover_zone(pt: POINT, icon: &RECT) -> bool {
+/// Icon rect (padded) or panel rect keeps the panel open.
+fn point_in_hover_zone(pt: POINT, icon: &RECT, panel: &RECT) -> bool {
     let pad = 4;
     let in_icon = pt.x >= icon.left - pad
         && pt.x <= icon.right + pad
         && pt.y >= icon.top - pad
         && pt.y <= icon.bottom + pad;
-    let panel = panel_rect(icon);
     let in_panel = pt.x >= panel.left
         && pt.x <= panel.right
         && pt.y >= panel.top
@@ -124,35 +125,39 @@ fn point_in_hover_zone(pt: POINT, icon: &RECT) -> bool {
     in_icon || in_panel
 }
 
-/// Panel goes to the right of the icon, flipped left when it would run off
-/// the primary work area's right edge.
-fn panel_rect(icon: &RECT) -> RECT {
+/// Panel goes to the right of the icon in physical pixels, flipped left when
+/// it would run off the virtual screen's right edge.
+fn panel_rect(icon: &RECT, pw: i32, ph: i32) -> RECT {
     let screen_w = unsafe {
         windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
             windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN,
         )
     };
     let mut left = icon.right + PANEL_GAP;
-    if left + PANEL_W > screen_w {
-        left = icon.left - PANEL_GAP - PANEL_W;
+    if left + pw > screen_w {
+        left = icon.left - PANEL_GAP - pw;
     }
     let top = icon.top.max(0);
     RECT {
         left,
         top,
-        right: left + PANEL_W,
-        bottom: top + PANEL_H,
+        right: left + pw,
+        bottom: top + ph,
     }
 }
 
-fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) {
-    let Some(win) = app.get_webview_window("overlay") else {
-        return;
-    };
-    let r = panel_rect(icon_rect);
+/// Returns the panel's physical rect when shown.
+fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option<RECT> {
+    let win = app.get_webview_window("overlay")?;
+    let sf = win.scale_factor().unwrap_or(1.0);
+    let pw = (PANEL_W * sf).round() as i32;
+    let ph = (PANEL_H * sf).round() as i32;
+    let r = panel_rect(icon_rect, pw, ph);
     let _ = app.emit("nugget:show", payload);
+    let _ = win.set_size(PhysicalSize::new(pw as u32, ph as u32));
     let _ = win.set_position(PhysicalPosition::new(r.left, r.top));
     let _ = win.show();
+    Some(r)
 }
 
 fn hide_panel(app: &AppHandle) {

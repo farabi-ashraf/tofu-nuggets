@@ -33,10 +33,15 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
 
 ### 2. Overlay panel
 
-- Transparent, undecorated, always-on-top Tauri window, hidden by default.
-- Position near icon bounding rect; keep on-screen (flip side near edges).
-- Acrylic blur via `window-vibrancy`. Hover panel is read-only quick view; click-through into it enables interaction (todo checkboxes, links).
+- Transparent, undecorated, always-on-top Tauri window, hidden by default, never focusable (`WS_EX_NOACTIVATE` via `set_focusable(false)`).
+- Position near icon bounding rect in physical pixels, scaled by `scale_factor()`; flip side near screen edges.
 - Dismiss on cursor leave (icon + panel union) with small grace period.
+- **Transparency/glass findings (Milestone 1, Win 11 26200):**
+  - Tauri `transparent(true)` alone is NOT enough — WebView2 still paints an opaque theme-colored canvas. Must also set `ICoreWebView2Controller2::put_DefaultBackgroundColor` to alpha 0 (via `webview2-com`, which drags in a second `windows-core` version — aliased dep).
+  - **OS blur is unavailable for never-activated windows**: DWM system backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`) and SWCA acrylic (window-vibrancy) both render a solid grey fill when the window is inactive. Glass look is therefore pure CSS (translucent gradient + border) over a genuinely transparent window. Revisit real blur later via DirectComposition backdrop brush if ever worth it.
+  - Rounded corners + dark mode via `DwmSetWindowAttribute` (`DWMWCP_ROUND`, `DWMWA_USE_IMMERSIVE_DARK_MODE`) work fine.
+  - Tauri v2 events need a `capabilities/default.json` granting `core:default` to the window, else JS `listen` silently never fires.
+  - Explorer's own hover infotip can overlap our panel — suppress or offset later (polish).
 
 ### 3. Note capture (editor window)
 
@@ -76,6 +81,7 @@ The pitch is "light layer on top of the desktop" — these are commitments, not 
 
 - **Icon count does not affect hover cost**: detection is a single `ElementFromPoint` hit-test at the cursor, not per-icon scanning. 100 icons and 1000 icons cost the same. Badge refresh enumerates tagged-icon rects only — a few ms every few seconds, only while desktop is foreground.
 - **WebView2 lifecycle**: spawned on first panel/editor show, released after idle timeout (default 5 min, configurable) so RAM returns to core baseline. Cost: first hover after release pays ~300–500 ms cold start; warm hovers render <150 ms.
+- **Measured (Milestone 1, debug build)**: main process 51 MB (release build will shrink), WebView2 warm = **379 MB across 6 processes** — far above the original 60–80 MB estimate. The idle-release mechanism is mandatory to meet budget; implement by destroying/recreating the overlay webview window rather than hiding it.
 - Disk: installer ~10 MB; nuggets 1–5 KB each; SQLite index <1 MB for hundreds of nuggets.
 
 ## Accessibility & theming

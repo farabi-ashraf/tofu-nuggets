@@ -28,9 +28,13 @@
 0. Spike: hover detection ✅ GO      → verified 2026-07-17 on Win 11: simtest 51/51 icons
    (UIA ElementFromPoint on desktop)    detected + paths resolved (spikes/hover-detect).
                                         Still pending: Win 10, multi-monitor, DPI ≠ 100%.
-1. Overlay panel + badge layer       → verify: hover annotated icon shows panel <150 ms after
-                                        debounce (warm); leaves cleanly; correct position near
-                                        edges; badges appear on tagged icons, click-through OK
+1. Overlay panel + badge layer ✅    → verified 2026-07-17 on Win 11: panel shows on hover over
+                                        annotated icon (translucent glass, correct position/DPI),
+                                        hides on leave; badges render on tagged icons only,
+                                        click-through by construction (WS_EX_TRANSPARENT).
+                                        Deferred: right-edge flip test, native infotip
+                                        suppression, WebView2 idle-release (see ARCHITECTURE
+                                        perf notes — measured 379 MB warm, release mandatory).
 2. Sidecar storage + index           → verify: unit tests — write/read/rename tracking;
                                         rebuild index from sidecars matches
 3. Editor (TipTap) + hotkey          → verify: create/edit note on selected icon; todo check

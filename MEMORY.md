@@ -4,13 +4,15 @@
 
 ## Status
 
-- **Phase**: Milestone 0 complete — hover detection spike passed (GO). Git repo initialized.
-- **Next step**: Milestone 1 — overlay panel + badge layer (see `docs/MVP.md`). Before Tauri work: install VS Build Tools / MSVC toolchain (see dev environment notes).
+- **Phase**: Milestone 1 complete — overlay panel + badge layer working and verified via screenshots on Win 11.
+- **Next step**: Milestone 2 — sidecar storage hardening: rename/move tracking (`ReadDirectoryChangesW`), SQLite cache index, unit tests. Also carry-over TODOs: WebView2 idle-release (mandatory, 379 MB warm), right-edge panel flip test, Explorer infotip suppression.
+- **Demo state**: two seeded nuggets live on the real desktop — `Works` folder and `Untitled-1.psd` (sidecars under `OneDrive\Desktop`). Run `app/src-tauri/target/debug/tofu-nuggets.exe`, hover those icons on the desktop.
 
 ## Dev environment notes (this machine)
 
-- Rust via rustup, **GNU toolchain** (`stable-x86_64-pc-windows-gnu`) — no MSVC build tools installed yet. `windows` crate **pinned to 0.58** in spike: 0.60+ uses raw-dylib which needs `dlltool` + `as` that the self-contained GNU toolchain lacks (known rustup gap).
-- **Tauri phase requires MSVC**: install VS Build Tools (`winget install Microsoft.VisualStudio.2022.BuildTools` + VC workload), then `rustup default stable-msvc`. After that, windows crate can be unpinned.
+- Rust via rustup. **Default toolchain now `stable-x86_64-pc-windows-msvc`**; VS Build Tools 2022 + Win 11 SDK installed via winget (2026-07-17). App uses `windows` 0.62. The old GNU-toolchain spike keeps `windows` pinned to 0.58 (raw-dylib/dlltool gap) — leave it.
+- App transparency stack is subtle — read ARCHITECTURE.md §2 findings before touching overlay window code (`webview2-com` + aliased `windows-core` 0.61 dep is load-bearing).
+- Node v24 + npm available (needed for TipTap/Vite in Milestone 3).
 - Repo on E: drive (no ownership recording) — `safe.directory` exception added to global git config.
 - User's desktop is OneDrive-redirected; icons split across OneDrive Desktop + Public Desktop.
 
@@ -38,3 +40,4 @@
 
 - **2026-07-17**: Premise discussed. Market research done (Notezilla closest competitor; gap confirmed). Docs created: CLAUDE.md, FEASIBILITY, ARCHITECTURE, MVP. Added: performance budget, badge layer, accessibility settings, this memory file.
 - **2026-07-17 (2)**: Git init + docs committed. Rust (GNU) installed. Milestone 0 spike built and passed: `spikes/hover-detect` — scan (51 icons, paths resolved incl. OneDrive/Public desktop), simtest 51/51 PASS with desktop visible, covered-window negative case verified. Findings folded into ARCHITECTURE.md.
+- **2026-07-17 (3)**: Milestone 1 built and verified. VS Build Tools installed, MSVC default. Tauri 2 app in `app/`: hover engine (debounced UIA), glass overlay panel (screenshot-verified show/hide with real transparency), native badge layer (orange dots, click-through). Hard-won transparency findings in ARCHITECTURE.md §2. WebView2 memory measured 379 MB warm → idle-release mandatory. Seeded demo nuggets on Works + Untitled-1.psd.
