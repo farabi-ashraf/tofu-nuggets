@@ -2,6 +2,7 @@
 
 mod badges;
 mod desktop;
+mod editor;
 mod hover;
 mod index;
 mod overlay;
@@ -11,11 +12,29 @@ mod watcher;
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 fn main() {
+    let hotkey: Shortcut = "ctrl+shift+n".parse().expect("valid hotkey");
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts([hotkey])
+                .expect("register hotkey")
+                .with_handler(move |app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed && *shortcut == hotkey {
+                        editor::open_for_target(app);
+                    }
+                })
+                .build(),
+        )
         .manage(hover::CurrentNugget::default())
-        .invoke_handler(tauri::generate_handler![hover::get_current_nugget])
+        .manage(editor::CurrentEdit::default())
+        .invoke_handler(tauri::generate_handler![
+            hover::get_current_nugget,
+            editor::get_current_edit,
+            editor::save_nugget
+        ])
         .setup(|app| {
             // Warm overlay at startup; the hover engine destroys it after
             // idle and recreates it on demand.

@@ -4,8 +4,9 @@
 
 ## Status
 
-- **Phase**: Milestone 2 complete — storage/index/watcher tested (10 unit tests), WebView2 idle-release live-verified (6 procs → 0 → recreate on hover).
-- **Next step**: Milestone 3 — editor: TipTap in a Tauri window (needs Vite scaffold, Node available), global hotkey on selected desktop icon, `write_nugget` wiring. Carry-over TODOs: right-edge panel flip test, Explorer infotip suppression.
+- **Phase**: Milestone 3 complete — editor E2E-verified (hotkey → TipTap edit → sidecar save → panel shows change).
+- **Next step**: Milestone 4 — file-to-file links (`nugget://open?path=...` scheme, link picker in editor, Explorer open on click). Carry-over TODOs: right-edge panel flip test, Explorer infotip suppression, todo-check from hover panel, URL open-in-browser from panel.
+- **Build note**: frontend is Vite-built now — run `npm run build` in `app/ui` BEFORE `cargo build` (assets embed from `ui/dist`).
 - **Demo state**: two seeded nuggets live on the real desktop — `Works` folder and `Untitled-1.psd` (sidecars under `OneDrive\Desktop`). Run `app/src-tauri/target/debug/tofu-nuggets.exe`, hover those icons on the desktop.
 
 ## Dev environment notes (this machine)
@@ -40,5 +41,6 @@
 
 - **2026-07-17**: Premise discussed. Market research done (Notezilla closest competitor; gap confirmed). Docs created: CLAUDE.md, FEASIBILITY, ARCHITECTURE, MVP. Added: performance budget, badge layer, accessibility settings, this memory file.
 - **2026-07-17 (2)**: Git init + docs committed. Rust (GNU) installed. Milestone 0 spike built and passed: `spikes/hover-detect` — scan (51 icons, paths resolved incl. OneDrive/Public desktop), simtest 51/51 PASS with desktop visible, covered-window negative case verified. Findings folded into ARCHITECTURE.md.
+- **2026-07-17 (5)**: Milestone 3. ui/ became npm+Vite package (TipTap deps). Editor window (dark, undecorated, drag-region titlebar, toolbar: bold/italic/bullets/todos/links), global hotkey Ctrl+Shift+N via tauri-plugin-global-shortcut (cursor target → UIA selection fallback), save_nugget command preserves created_ms + upserts index. E2E: SendKeys typed into real editor, saved, panel verified showing edit.
 - **2026-07-17 (4)**: Milestone 2. Added rusqlite index (rebuildable cache, app-data DB), notify-based watcher (sidecar follows renames; deletes drop index entry but keep sidecar), preview extraction, 10 unit tests. WebView2 idle-release implemented; two traps: destroying the only window exits Tauri (prevent_exit needed), fresh pages miss emits (get_current_nugget pull on load). Cycle live-verified.
 - **2026-07-17 (3)**: Milestone 1 built and verified. VS Build Tools installed, MSVC default. Tauri 2 app in `app/`: hover engine (debounced UIA), glass overlay panel (screenshot-verified show/hide with real transparency), native badge layer (orange dots, click-through). Hard-won transparency findings in ARCHITECTURE.md §2. WebView2 memory measured 379 MB warm → idle-release mandatory. Seeded demo nuggets on Works + Untitled-1.psd.

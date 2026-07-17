@@ -40,8 +40,11 @@
                                         rebuild skips stale sidecars, watcher event handling).
                                         Bonus: WebView2 idle-release shipped + live-verified
                                         (6 procs → 0 after idle, recreate on hover ~1 s).
-3. Editor (TipTap) + hotkey          → verify: create/edit note on selected icon; todo check
-                                        state persists; URL opens browser
+3. Editor (TipTap) + hotkey ✅       → verified 2026-07-17 E2E: Ctrl+Shift+N over icon opens
+                                        editor with existing note; typed text saved to sidecar
+                                        (created_ms preserved); hover panel shows the edit.
+                                        Deferred to M4/M6: todo-check persistence from the
+                                        hover panel, URL open-in-browser interception.
 4. File links                        → verify: nugget:// link opens Explorer at target;
                                         missing target shows graceful error
 5. Main window + tray + autostart    → verify: all annotated items listed; autostart survives

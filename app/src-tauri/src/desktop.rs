@@ -82,6 +82,25 @@ impl DesktopUia {
         Ok(icons)
     }
 
+    /// Currently selected desktop icon, if any (UIA selection pattern).
+    pub fn selected_icon(&self) -> Option<DesktopIcon> {
+        let lv = find_desktop_listview()?;
+        unsafe {
+            let root = self.auto.ElementFromHandle(lv).ok()?;
+            let pat: IUIAutomationSelectionPattern =
+                root.GetCurrentPatternAs(UIA_SelectionPatternId).ok()?;
+            let sel = pat.GetCurrentSelection().ok()?;
+            if sel.Length().ok()? < 1 {
+                return None;
+            }
+            let el = sel.GetElement(0).ok()?;
+            let name = el.CurrentName().ok()?.to_string();
+            let rect = el.CurrentBoundingRectangle().ok()?;
+            let path = resolve_path(&name, &self.dirs);
+            Some(DesktopIcon { name, rect, path })
+        }
+    }
+
     fn is_desktop_icon(&self, el: &IUIAutomationElement) -> bool {
         unsafe {
             if el

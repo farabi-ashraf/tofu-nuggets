@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edit Nugget</title>
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+  <main class="editor-shell">
+    <header class="titlebar" data-tauri-drag-region>
+      <span class="dot" aria-hidden="true"></span>
+      <h1 id="icon-name" data-tauri-drag-region>…</h1>
+      <button id="close-btn" class="chrome-btn" title="Close (Esc)" aria-label="Close">✕</button>
+    </header>
+    <p class="path" id="icon-path"></p>
+    <div class="toolbar" role="toolbar" aria-label="Formatting">
+      <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+      <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+      <button data-cmd="bulletList" title="Bullet list">•≡</button>
+      <button data-cmd="taskList" title="Todo list">☑</button>
+      <button data-cmd="link" title="Add link (Ctrl+K)">🔗</button>
+    </div>
+    <div id="editor" class="note-editor"></div>
+    <footer class="statusbar">
+      <span id="save-state" role="status"></span>
+      <button id="save-btn" class="primary" title="Save (Ctrl+S)">Save</button>
+    </footer>
+  </main>
+  <script type="module" src="editor.js"></script>
+</body>
+</html>

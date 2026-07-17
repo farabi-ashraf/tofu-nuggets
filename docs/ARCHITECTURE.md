@@ -43,11 +43,12 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
   - Tauri v2 events need a `capabilities/default.json` granting `core:default` to the window, else JS `listen` silently never fires.
   - Explorer's own hover infotip can overlap our panel — suppress or offset later (polish).
 
-### 3. Note capture (editor window)
+### 3. Note capture (editor window) — implemented (Milestone 3)
 
-- Global hotkey (default e.g. `Ctrl+Shift+N`) while a desktop icon is selected, plus tray-menu entry. True right-click context-menu entry on desktop icons requires a shell extension — defer post-MVP; hotkey first.
-- Editor: TipTap in a Tauri window. MVP marks: bold/italic, bullet list, checkable todo list, hyperlinks.
-- File links: special link scheme (`nugget://open?path=...`) → backend opens Explorer via `explorer /select,"<path>"`.
+- Global hotkey `Ctrl+Shift+N` (`tauri-plugin-global-shortcut`): targets the icon under the cursor, falls back to the UIA-selected icon. Tray-menu entry comes with M5; shell context menu stays post-MVP.
+- Editor: TipTap (StarterKit + Link + TaskList/TaskItem + Placeholder) in a dark undecorated Tauri window, Vite-built (`ui/` is now an npm package; `npm run build` must run before `cargo build` since assets embed from `ui/dist`). Marks: bold/italic, bullets, checkable todos, hyperlinks. Ctrl+S saves, Esc saves-and-closes.
+- `save_nugget` command writes the sidecar (preserving `created_ms`) and upserts the index; badges pick the change up on their next 2 s refresh.
+- File links: special link scheme (`nugget://open?path=...`) → backend opens Explorer via `explorer /select,"<path>"` — Milestone 4.
 
 ### 4. Storage — sidecar files (user decision)
 
