@@ -1,0 +1,48 @@
+# MVP Scope & Milestones
+
+## In scope (MVP)
+
+- Windows 10/11, desktop icons only.
+- Hover over annotated desktop icon → glassy panel shows the nugget.
+- Badge layer: small visual cue on tagged icons (toggleable) so tagged items are scannable at a glance.
+- Global hotkey on selected desktop icon → rich text editor (bold/italic, bullets, checkable todos, clickable URLs).
+- File-to-file links: link another file/folder inside a note; clicking opens Explorer at target.
+- Sidecar storage (`.nuggets` hidden folders), SQLite cache index.
+- Main window: list of all annotated items.
+- Accessibility: overlay font size (S/M/L/XL), panel scale, dark/light/system theme, Reduced Motion + High Contrast respect (see ARCHITECTURE.md).
+- Tray icon: open, pause, settings (hotkey, autostart, accessibility, badges), quit.
+- Performance budget per ARCHITECTURE.md: ~0% CPU idle, core RAM ~15–20 MB, icon count must not affect hover cost.
+
+## Out of scope (MVP) — explicit
+
+- File Explorer window integration (post-MVP, likely Pro tier)
+- Right-click shell context menu (needs shell extension — post-MVP)
+- Sync, accounts, teams
+- macOS/Linux
+- Search, tags, link-graph view
+- Monetization (free MVP per FEASIBILITY.md)
+
+## Milestones
+
+```
+0. Spike: hover detection            → verify: console logs correct file path under cursor
+   (UIA ElementFromPoint on desktop)    on Win 10 + Win 11, incl. multi-monitor + DPI scaling
+1. Overlay panel + badge layer       → verify: hover annotated icon shows panel <150 ms after
+                                        debounce (warm); leaves cleanly; correct position near
+                                        edges; badges appear on tagged icons, click-through OK
+2. Sidecar storage + index           → verify: unit tests — write/read/rename tracking;
+                                        rebuild index from sidecars matches
+3. Editor (TipTap) + hotkey          → verify: create/edit note on selected icon; todo check
+                                        state persists; URL opens browser
+4. File links                        → verify: nugget:// link opens Explorer at target;
+                                        missing target shows graceful error
+5. Main window + tray + autostart    → verify: all annotated items listed; autostart survives
+                                        reboot; pause stops hover polling
+6. Settings + accessibility          → verify: font size / panel scale / theme apply live;
+                                        High Contrast falls back to solid colors; Reduced
+                                        Motion disables animations; badges toggle off
+7. Polish + installer (MSI/NSIS)     → verify: clean install/uninstall on fresh VM; RAM/CPU
+                                        measured against ARCHITECTURE.md performance budget
+```
+
+Milestone 0 is a go/no-go gate: if desktop hover detection proves unreliable, fall back to the Explorer infotip shell-extension approach before building anything else.
