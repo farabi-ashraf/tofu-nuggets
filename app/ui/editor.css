@@ -113,6 +113,13 @@ body {
   color: var(--accent);
 }
 
+.toolbar .sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 4px;
+  background: var(--border);
+}
+
 .note-editor {
   flex: 1;
   overflow-y: auto;

@@ -29,6 +29,7 @@ windows = { version = "0.62", features = [
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 notify = "8.2.0"
 tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-dialog = "2.7.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"

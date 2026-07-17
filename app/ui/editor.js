@@ -8,6 +8,7 @@ import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -78,13 +79,68 @@ function runCommand(cmd) {
       if (url) chain.setLink({ href: url }).run();
       break;
     }
+    case "linkFile":
+      linkTarget(false);
+      break;
+    case "linkFolder":
+      linkTarget(true);
+      break;
   }
+}
+
+// Pick a file/folder and insert a nugget:// link naming it; clicking that
+// link (in the hover panel) opens Explorer at the target.
+async function linkTarget(directory) {
+  let selected;
+  try {
+    selected = await openDialog({ multiple: false, directory });
+  } catch (e) {
+    saveState.textContent = `picker failed: ${e}`;
+    return;
+  }
+  if (!selected) return;
+  const path = Array.isArray(selected) ? selected[0] : selected;
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+  const href = `nugget://open?path=${encodeURIComponent(path)}`;
+  editor
+    .chain()
+    .focus()
+    .insertContent([
+      { type: "text", text: name, marks: [{ type: "link", attrs: { href } }] },
+      { type: "text", text: " " },
+    ])
+    .run();
 }
 
 document.querySelector(".toolbar").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-cmd]");
   if (btn) runCommand(btn.dataset.cmd);
 });
+
+// Ctrl/Cmd-click a link in the editor to follow it (plain click edits text).
+document.getElementById("editor").addEventListener("click", (e) => {
+  const a = e.target.closest("a");
+  if (!a || !(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  openLink(a.getAttribute("href"));
+});
+
+function openLink(href) {
+  if (!href) return;
+  if (href.startsWith("nugget://")) {
+    let path = "";
+    try {
+      path = decodeURIComponent(new URL(href).searchParams.get("path") || "");
+    } catch {
+      return;
+    }
+    invoke("open_in_explorer", { path }).catch((err) => {
+      saveState.textContent = String(err);
+    });
+  } else if (/^https?:/i.test(href)) {
+    invoke("open_external", { url: href }).catch(() => {});
+  }
+}
 
 function load(payload) {
   currentPath = payload.path;

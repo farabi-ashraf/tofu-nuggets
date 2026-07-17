@@ -11,6 +11,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tiptap/core": "^2.10.0",
     "@tiptap/starter-kit": "^2.10.0",
     "@tiptap/extension-link": "^2.10.0",

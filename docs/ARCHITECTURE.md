@@ -48,7 +48,15 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
 - Global hotkey `Ctrl+Shift+N` (`tauri-plugin-global-shortcut`): targets the icon under the cursor, falls back to the UIA-selected icon. Tray-menu entry comes with M5; shell context menu stays post-MVP.
 - Editor: TipTap (StarterKit + Link + TaskList/TaskItem + Placeholder) in a dark undecorated Tauri window, Vite-built (`ui/` is now an npm package; `npm run build` must run before `cargo build` since assets embed from `ui/dist`). Marks: bold/italic, bullets, checkable todos, hyperlinks. Ctrl+S saves, Esc saves-and-closes.
 - `save_nugget` command writes the sidecar (preserving `created_ms`) and upserts the index; badges pick the change up on their next 2 s refresh.
-- File links: special link scheme (`nugget://open?path=...`) → backend opens Explorer via `explorer /select,"<path>"` — Milestone 4.
+- File links (implemented, Milestone 4): editor 📄/📁 buttons use `tauri-plugin-dialog` to pick a file/folder, inserting a TipTap link with href `nugget://open?path=<encoded abs path>` and the basename as text. JS decodes the path and calls backend commands (`links.rs`): `open_in_explorer` (folder → open it, file → `explorer /select`) and `open_external` (http(s) → default browser), both via `ShellExecuteW`. Panel intercepts link clicks (it can't navigate); the editor follows links on Ctrl+click.
+
+### Desktop infotip suppression (Milestone 4)
+
+Explorer's native icon infotip (folder-contents / file-type tooltip) pops *over* our panel — unusable for folders. `desktop::suppress_desktop_infotips()` clears `LVS_EX_INFOTIP` (0x0400) on the desktop `SysListView32` via `LVM_SETEXTENDEDLISTVIEWSTYLE`. Desktop-only, reverts on Explorer restart, so it's re-applied on each 2 s badge refresh. Now the panel is the sole hover surface.
+
+### Todo checkboxes in the panel (Milestone 4)
+
+TaskList checkboxes render live in the panel; toggling one reflects `data-checked` into the markup and calls `save_nugget`, so the change round-trips through the sidecar and index. The panel receives clicks despite being non-activating (`set_focusable(false)` blocks keyboard focus, not mouse input).
 
 ### 4. Storage — sidecar files (user decision)
 

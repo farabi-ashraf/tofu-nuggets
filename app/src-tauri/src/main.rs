@@ -5,6 +5,7 @@ mod desktop;
 mod editor;
 mod hover;
 mod index;
+mod links;
 mod overlay;
 mod storage;
 mod watcher;
@@ -28,17 +29,25 @@ fn main() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .manage(hover::CurrentNugget::default())
         .manage(editor::CurrentEdit::default())
         .invoke_handler(tauri::generate_handler![
             hover::get_current_nugget,
             editor::get_current_edit,
-            editor::save_nugget
+            editor::save_nugget,
+            links::open_in_explorer,
+            links::open_external
         ])
         .setup(|app| {
             // Warm overlay at startup; the hover engine destroys it after
             // idle and recreates it on demand.
             overlay::create(app.handle())?;
+
+            // Silence the desktop's native infotips so our panel is the sole
+            // hover surface (re-applied by the badge layer after Explorer
+            // restarts).
+            desktop::suppress_desktop_infotips();
 
             let roots = desktop::desktop_dirs();
             let db_path = app.path().app_data_dir()?.join("index.db");

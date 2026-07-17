@@ -121,6 +121,9 @@ fn refresh(hwnd: HWND, ctx: &mut Ctx) {
         return;
     }
 
+    // Cheap re-apply so infotips stay off across Explorer restarts.
+    desktop::suppress_desktop_infotips();
+
     let Ok(icons) = ctx.uia.list_icons() else {
         return;
     };

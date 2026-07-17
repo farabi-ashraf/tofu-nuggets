@@ -45,8 +45,12 @@
                                         (created_ms preserved); hover panel shows the edit.
                                         Deferred to M4/M6: todo-check persistence from the
                                         hover panel, URL open-in-browser interception.
-4. File links                        → verify: nugget:// link opens Explorer at target;
-                                        missing target shows graceful error
+4. File links ✅                     → verified 2026-07-17 E2E: editor 📄/📁 picker inserts
+                                        nugget:// link; clicking it in the panel opened a new
+                                        Explorer window at the target (Cabinet count 1→2).
+                                        Bonus this milestone: native desktop infotips
+                                        suppressed (panel is now the sole hover surface),
+                                        todo checkbox toggles persist to the sidecar.
 5. Main window + tray + autostart    → verify: all annotated items listed; autostart survives
                                         reboot; pause stops hover polling
 6. Settings + accessibility          → verify: font size / panel scale / theme apply live;

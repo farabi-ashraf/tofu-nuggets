@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capability for app windows","local":true,"windows":["overlay","editor","main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Default capability for app windows","local":true,"windows":["overlay","editor","main"],"permissions":["core:default","dialog:allow-open"]}}

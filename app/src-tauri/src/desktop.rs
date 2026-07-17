@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use windows::core::*;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::System::Com::*;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Shell::*;
@@ -152,6 +152,30 @@ pub fn find_desktop_listview() -> Option<HWND> {
 
         FindWindowExW(Some(defview?), None, w!("SysListView32"), PCWSTR::null()).ok()
     }
+}
+
+/// Suppress the desktop's native icon infotips (the Explorer tooltip that
+/// otherwise pops over our panel) by clearing `LVS_EX_INFOTIP` on the desktop
+/// ListView. Desktop-only and reverted when Explorer restarts — we re-apply
+/// on a timer. Returns whether the listview was found.
+///
+/// `LVM_SETEXTENDEDLISTVIEWSTYLE = 0x1036`, `LVS_EX_INFOTIP = 0x0400`; passing
+/// the mask with a zero value clears just that bit.
+pub fn suppress_desktop_infotips() -> bool {
+    const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = 0x1036;
+    const LVS_EX_INFOTIP: usize = 0x0400;
+    let Some(lv) = find_desktop_listview() else {
+        return false;
+    };
+    unsafe {
+        SendMessageW(
+            lv,
+            LVM_SETEXTENDEDLISTVIEWSTYLE,
+            Some(WPARAM(LVS_EX_INFOTIP)),
+            Some(LPARAM(0)),
+        );
+    }
+    true
 }
 
 /// True while the desktop itself is the foreground window (icons visible and

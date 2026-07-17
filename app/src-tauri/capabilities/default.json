@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capability for app windows",
   "windows": ["overlay", "editor", "main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }
