@@ -25,7 +25,11 @@ Poll cursor position with a low-frequency timer (e.g., 100 ms) + `WM_MOUSEMOVE` 
 
 Resolve icon display name → full path via the desktop folder's shell items (`IShellFolder` enum of `FOLDERID_Desktop` + public desktop), matching by display name.
 
-**Build a throwaway spike for this first. It is the make-or-break piece.**
+**Spike result (2026-07-17, `spikes/hover-detect`): GO.** UIA approach validated on Win 11 — 51/51 desktop icons detected via `ElementFromPoint` with correct path resolution; covered icons correctly report the covering window (the production "don't show panel" case). Findings to carry into the real implementation:
+
+- Desktop is often **OneDrive-redirected** (`FOLDERID_Desktop` → `...\OneDrive\Desktop`) and merged with `FOLDERID_PublicDesktop` — always resolve against both. Bonus: sidecar notes on such desktops sync via OneDrive for free.
+- **Virtual icons** (This PC, Recycle Bin) have no filesystem path — skip them for annotation in MVP.
+- Display-name → path matching must try both full filename and stem (extension hiding).
 
 ### 2. Overlay panel
 

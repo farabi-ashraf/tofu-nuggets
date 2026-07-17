@@ -4,8 +4,15 @@
 
 ## Status
 
-- **Phase**: pre-code. Docs complete, no source files yet.
-- **Next step**: Milestone 0 spike — Rust program proving desktop-icon hover detection via UIA `ElementFromPoint` (go/no-go gate, see `docs/MVP.md`).
+- **Phase**: Milestone 0 complete — hover detection spike passed (GO). Git repo initialized.
+- **Next step**: Milestone 1 — overlay panel + badge layer (see `docs/MVP.md`). Before Tauri work: install VS Build Tools / MSVC toolchain (see dev environment notes).
+
+## Dev environment notes (this machine)
+
+- Rust via rustup, **GNU toolchain** (`stable-x86_64-pc-windows-gnu`) — no MSVC build tools installed yet. `windows` crate **pinned to 0.58** in spike: 0.60+ uses raw-dylib which needs `dlltool` + `as` that the self-contained GNU toolchain lacks (known rustup gap).
+- **Tauri phase requires MSVC**: install VS Build Tools (`winget install Microsoft.VisualStudio.2022.BuildTools` + VC workload), then `rustup default stable-msvc`. After that, windows crate can be unpinned.
+- Repo on E: drive (no ownership recording) — `safe.directory` exception added to global git config.
+- User's desktop is OneDrive-redirected; icons split across OneDrive Desktop + Public Desktop.
 
 ## Settled decisions (do not re-ask)
 
@@ -30,3 +37,4 @@
 ## Session log
 
 - **2026-07-17**: Premise discussed. Market research done (Notezilla closest competitor; gap confirmed). Docs created: CLAUDE.md, FEASIBILITY, ARCHITECTURE, MVP. Added: performance budget, badge layer, accessibility settings, this memory file.
+- **2026-07-17 (2)**: Git init + docs committed. Rust (GNU) installed. Milestone 0 spike built and passed: `spikes/hover-detect` — scan (51 icons, paths resolved incl. OneDrive/Public desktop), simtest 51/51 PASS with desktop visible, covered-window negative case verified. Findings folded into ARCHITECTURE.md.

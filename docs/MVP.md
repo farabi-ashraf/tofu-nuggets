@@ -25,8 +25,9 @@
 ## Milestones
 
 ```
-0. Spike: hover detection            → verify: console logs correct file path under cursor
-   (UIA ElementFromPoint on desktop)    on Win 10 + Win 11, incl. multi-monitor + DPI scaling
+0. Spike: hover detection ✅ GO      → verified 2026-07-17 on Win 11: simtest 51/51 icons
+   (UIA ElementFromPoint on desktop)    detected + paths resolved (spikes/hover-detect).
+                                        Still pending: Win 10, multi-monitor, DPI ≠ 100%.
 1. Overlay panel + badge layer       → verify: hover annotated icon shows panel <150 ms after
                                         debounce (warm); leaves cleanly; correct position near
                                         edges; badges appear on tagged icons, click-through OK
