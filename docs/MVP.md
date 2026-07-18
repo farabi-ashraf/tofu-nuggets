@@ -69,8 +69,18 @@
                                         with the new state wiring + badge toggle. Tray gained
                                         "Settings…". Deferred: title-bar theme sync (cosmetic),
                                         live tray-click + badge-off not machine-clicked.
-7. Polish + installer (MSI/NSIS)     → verify: clean install/uninstall on fresh VM; RAM/CPU
-                                        measured against ARCHITECTURE.md performance budget
+7. Polish + installer (NSIS) ✅*     → verified 2026-07-18 (this machine, not fresh VM):
+                                        NSIS per-user installer built (2.9 MB, exe 11.5 MB,
+                                        multi-size icon); silent install → app runs →
+                                        silent uninstall leaves no dir/registry/shortcut
+                                        traces, sidecars untouched. Budget (release build):
+                                        idle CPU 0.00%, core private RAM 6.3 MB (working
+                                        set 30 MB incl. shared DLLs), WebView2 6 procs →
+                                        0 after idle release. Polish: right-edge flip now
+                                        unit-tested (5 tests, incl. DPI×zoom), clippy
+                                        code-lints zero. *Fresh-VM install/uninstall and
+                                        Win 10 / multi-monitor / DPI≠100% still pending —
+                                        needs hardware this machine doesn't have.
 ```
 
 Milestone 0 is a go/no-go gate: if desktop hover detection proves unreliable, fall back to the Explorer infotip shell-extension approach before building anything else.

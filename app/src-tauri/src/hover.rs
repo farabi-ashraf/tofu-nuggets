@@ -172,12 +172,7 @@ fn point_in_hover_zone(pt: POINT, icon: &RECT, panel: &RECT) -> bool {
 
 /// Panel goes to the right of the icon in physical pixels, flipped left when
 /// it would run off the virtual screen's right edge.
-fn panel_rect(icon: &RECT, pw: i32, ph: i32) -> RECT {
-    let screen_w = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
-            windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN,
-        )
-    };
+fn panel_rect(icon: &RECT, pw: i32, ph: i32, screen_w: i32) -> RECT {
     let mut left = icon.right + PANEL_GAP;
     if left + pw > screen_w {
         left = icon.left - PANEL_GAP - pw;
@@ -188,6 +183,14 @@ fn panel_rect(icon: &RECT, pw: i32, ph: i32) -> RECT {
         top,
         right: left + pw,
         bottom: top + ph,
+    }
+}
+
+fn virtual_screen_width() -> i32 {
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+            windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN,
+        )
     }
 }
 
@@ -204,7 +207,7 @@ fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option
         .unwrap_or(1.0);
     let pw = (PANEL_W * sf * zoom).round() as i32;
     let ph = (PANEL_H * sf * zoom).round() as i32;
-    let r = panel_rect(icon_rect, pw, ph);
+    let r = panel_rect(icon_rect, pw, ph, virtual_screen_width());
     // Stash for freshly created pages, then emit for already-loaded ones.
     if let Ok(mut cur) = app.state::<CurrentNugget>().0.lock() {
         *cur = Some(payload.clone());
@@ -219,5 +222,72 @@ fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option
 fn hide_panel(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(overlay::LABEL) {
         let _ = win.hide();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn icon(left: i32, top: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right: left + 76,
+            bottom: top + 96,
+        }
+    }
+
+    #[test]
+    fn panel_sits_right_of_icon_normally() {
+        let r = panel_rect(&icon(100, 200), 340, 240, 1920);
+        assert_eq!(r.left, 176 + PANEL_GAP);
+        assert_eq!(r.top, 200);
+        assert_eq!(r.right - r.left, 340);
+        assert_eq!(r.bottom - r.top, 240);
+    }
+
+    #[test]
+    fn panel_flips_left_at_right_edge() {
+        // Icon hugging the right edge of a 1920-wide screen: right side would
+        // overflow, so the panel goes to the icon's left.
+        let ic = icon(1920 - 80, 300);
+        let r = panel_rect(&ic, 340, 240, 1920);
+        assert_eq!(r.right, ic.left - PANEL_GAP);
+        assert!(r.right <= 1920);
+        assert_eq!(r.left, ic.left - PANEL_GAP - 340);
+    }
+
+    #[test]
+    fn flip_threshold_is_exact() {
+        // Exactly fits: no flip.
+        let ic = icon(0, 0); // icon.right = 76
+        let screen_w = 76 + PANEL_GAP + 340;
+        let r = panel_rect(&ic, 340, 240, screen_w);
+        assert_eq!(r.left, 76 + PANEL_GAP);
+        // One pixel narrower: flips.
+        let r2 = panel_rect(&ic, 340, 240, screen_w - 1);
+        assert_eq!(r2.right, ic.left - PANEL_GAP);
+    }
+
+    #[test]
+    fn top_is_clamped_to_screen() {
+        let ic = RECT {
+            left: 100,
+            top: -30,
+            right: 176,
+            bottom: 66,
+        };
+        let r = panel_rect(&ic, 340, 240, 1920);
+        assert_eq!(r.top, 0);
+    }
+
+    #[test]
+    fn scaled_panel_still_flips() {
+        // 1.5x panel zoom on a 125% DPI screen.
+        let pw = (340.0_f64 * 1.25 * 1.5).round() as i32;
+        let ic = icon(2560 - 400, 100);
+        let r = panel_rect(&ic, pw, 450, 2560);
+        assert_eq!(r.right, ic.left - PANEL_GAP);
     }
 }

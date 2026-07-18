@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.tofunuggets.app",
   "build": {
+    "beforeBuildCommand": "npm --prefix ../ui run build",
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -14,6 +15,16 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "publisher": "Tofu Nuggets",
+    "shortDescription": "Hover notes for your desktop icons",
+    "longDescription": "Hover over a desktop file or folder to see the note you left on it. Rich text nuggets with todos and file links, created with a global hotkey, stored beside your files.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

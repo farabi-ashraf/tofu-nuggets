@@ -203,7 +203,7 @@ mod tests {
         std::fs::remove_file(&ghost).unwrap();
 
         let mut idx = NuggetIndex::open_in_memory().unwrap();
-        idx.rebuild(&[root.clone()]).unwrap();
+        idx.rebuild(std::slice::from_ref(&root)).unwrap();
 
         let all = idx.all().unwrap();
         assert_eq!(all.len(), 2);

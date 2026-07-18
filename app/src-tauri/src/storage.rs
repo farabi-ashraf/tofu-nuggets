@@ -103,6 +103,25 @@ fn sidecar_path_for_file(item: &Path) -> Option<PathBuf> {
     Some(parent.join(SIDECAR_DIR).join(format!("{name}.nugget.json")))
 }
 
+/// Best-effort FILE_ATTRIBUTE_HIDDEN on the .nuggets directory.
+fn hide_dir(dir: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+    };
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        if attrs != u32::MAX {
+            let _ = SetFileAttributesW(
+                PCWSTR(wide.as_ptr()),
+                FILE_FLAGS_AND_ATTRIBUTES(attrs | FILE_ATTRIBUTE_HIDDEN.0),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,24 +190,5 @@ mod tests {
         );
         let long = format!("<p>{}</p>", "x".repeat(300));
         assert_eq!(preview_text(&long).chars().count(), 120);
-    }
-}
-
-/// Best-effort FILE_ATTRIBUTE_HIDDEN on the .nuggets directory.
-fn hide_dir(dir: &Path) {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{
-        GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
-    };
-    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
-    unsafe {
-        let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
-        if attrs != u32::MAX {
-            let _ = SetFileAttributesW(
-                PCWSTR(wide.as_ptr()),
-                FILE_FLAGS_AND_ATTRIBUTES(attrs | FILE_ATTRIBUTE_HIDDEN.0),
-            );
-        }
     }
 }
