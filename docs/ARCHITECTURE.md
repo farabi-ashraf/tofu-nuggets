@@ -67,6 +67,7 @@ TaskList checkboxes render live in the panel; toggling one reflects `data-checke
 - Rename/move within a watched dir: `notify` crate watcher (wraps `ReadDirectoryChangesW`) renames the sidecar and updates the index. Windows delivers same-dir renames as one two-path event; cross-dir moves arrive as remove+create, so a move out of watched scope leaves a stale sidecar behind (harmless: index rebuilds skip sidecars whose item is missing). Folder notes always travel inside their folder.
 - App maintains a lightweight SQLite index (`rusqlite`, DB in app-data dir) purely as a cache for the "show all tagged items" main window; sidecars are the source of truth, index is rebuilt from a full scan at startup and kept fresh by the watcher.
 - **Implemented + tested (Milestone 2)**: `storage.rs` / `index.rs` / `watcher.rs`, 10 unit tests.
+- **Deletion (added post-M7)**: two paths, same backend. Saving a note with no visible text (`storage::is_empty_html` — tags stripped, trimmed) counts as removal: `save_nugget` returns `removed=true`, deletes the sidecar (and the `.nuggets` dir when that leaves it empty), drops the index row, and emits `nuggets:changed`; the badge dot and hover panel disappear on their next refresh since both re-read the sidecar. The main window's per-row Delete button calls the explicit `delete_nugget` command (same removal helper) behind a two-step in-row confirm ("Delete" → "Sure?", 3 s auto-disarm) — deliberately not a native dialog: no extra capability, no focus steal, automatable.
 
 ### WebView2 idle release (implemented, Milestone 2)
 

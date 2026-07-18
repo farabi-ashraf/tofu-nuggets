@@ -163,9 +163,10 @@ function load(payload) {
 async function save() {
   if (!currentPath) return;
   try {
-    await invoke("save_nugget", { path: currentPath, html: editor.getHTML() });
+    // Backend treats an empty note as removal (sidecar deleted, badge gone).
+    const removed = await invoke("save_nugget", { path: currentPath, html: editor.getHTML() });
     dirty = false;
-    saveState.textContent = "saved";
+    saveState.textContent = removed ? "note removed" : "saved";
   } catch (e) {
     saveState.textContent = `save failed: ${e}`;
   }

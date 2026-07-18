@@ -55,6 +55,34 @@ pub fn write_nugget(item: &Path, nugget: &Nugget) -> std::io::Result<()> {
     std::fs::write(&sc, serde_json::to_string_pretty(nugget)?)
 }
 
+/// Delete an item's nugget: remove the sidecar and, when that leaves the
+/// `.nuggets` dir empty, the dir itself. Missing sidecar is not an error.
+pub fn delete_nugget(item: &Path) -> std::io::Result<()> {
+    let Some(sc) = sidecar_path(item) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&sc) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    if let Some(dir) = sc.parent() {
+        if std::fs::read_dir(dir)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+    Ok(())
+}
+
+/// An "empty" note (no visible text once tags are stripped) counts as
+/// deleted: saving one removes the nugget instead of storing markup husks.
+pub fn is_empty_html(html: &str) -> bool {
+    preview_text(html).trim().is_empty()
+}
+
 /// Plain-text preview of a nugget's HTML for list views: tags stripped,
 /// whitespace collapsed, clipped to 120 chars.
 pub fn preview_text(html: &str) -> String {
@@ -180,6 +208,48 @@ mod tests {
         std::fs::rename(&old, &new).unwrap();
         rename_sidecar(&old, &new).unwrap();
         assert_eq!(read_nugget(&new).unwrap().html, "travels");
+    }
+
+    #[test]
+    fn delete_removes_sidecar_and_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("doc.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_nugget(&file, &nugget("<p>hi</p>")).unwrap();
+        assert!(has_nugget(&file));
+
+        delete_nugget(&file).unwrap();
+        assert!(!has_nugget(&file));
+        // Sole sidecar gone -> .nuggets dir cleaned up too.
+        assert!(!tmp.path().join(SIDECAR_DIR).exists());
+        // Deleting again is a no-op, not an error.
+        delete_nugget(&file).unwrap();
+    }
+
+    #[test]
+    fn delete_keeps_dir_with_other_sidecars() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        for f in [&a, &b] {
+            std::fs::write(f, b"x").unwrap();
+            write_nugget(f, &nugget("<p>hi</p>")).unwrap();
+        }
+        delete_nugget(&a).unwrap();
+        assert!(!has_nugget(&a));
+        assert!(has_nugget(&b));
+        assert!(tmp.path().join(SIDECAR_DIR).exists());
+    }
+
+    #[test]
+    fn empty_html_detection() {
+        assert!(is_empty_html(""));
+        assert!(is_empty_html("<p></p>"));
+        assert!(is_empty_html("<p> </p><ul><li></li></ul>"));
+        assert!(!is_empty_html("<p>note</p>"));
+        assert!(!is_empty_html(
+            "<ul data-type=\"taskList\"><li><input type=\"checkbox\"><div>todo</div></li></ul>"
+        ));
     }
 
     #[test]

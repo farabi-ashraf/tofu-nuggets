@@ -30,14 +30,21 @@ pub fn get_current_edit(state: State<CurrentEdit>) -> Option<EditPayload> {
     state.0.lock().ok().and_then(|g| g.clone())
 }
 
+/// Save a note. An empty note (no visible text) counts as removal: the
+/// sidecar is deleted, so the badge dot and hover panel disappear with it.
+/// Returns `true` when the nugget was removed instead of written.
 #[tauri::command]
 pub fn save_nugget(
     app: AppHandle,
     path: String,
     html: String,
     index: State<Arc<Mutex<NuggetIndex>>>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let item = std::path::PathBuf::from(&path);
+    if storage::is_empty_html(&html) {
+        remove_nugget(&app, &item, &index)?;
+        return Ok(true);
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -56,6 +63,29 @@ pub fn save_nugget(
         idx.upsert_item(&item);
     }
     // Let an open main window refresh its list.
+    let _ = app.emit("nuggets:changed", ());
+    Ok(false)
+}
+
+/// Explicit delete from the main window's list.
+#[tauri::command]
+pub fn delete_nugget(
+    app: AppHandle,
+    path: String,
+    index: State<Arc<Mutex<NuggetIndex>>>,
+) -> Result<(), String> {
+    remove_nugget(&app, std::path::Path::new(&path), &index)
+}
+
+fn remove_nugget(
+    app: &AppHandle,
+    item: &std::path::Path,
+    index: &State<Arc<Mutex<NuggetIndex>>>,
+) -> Result<(), String> {
+    storage::delete_nugget(item).map_err(|e| e.to_string())?;
+    if let Ok(idx) = index.lock() {
+        idx.remove_item(item);
+    }
     let _ = app.emit("nuggets:changed", ());
     Ok(())
 }

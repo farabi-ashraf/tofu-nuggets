@@ -196,6 +196,16 @@ main {
   border-color: var(--accent);
 }
 
+.row-actions button.danger:hover,
+.row-actions button.danger.armed {
+  border-color: #e5484d;
+  color: #e5484d;
+}
+
+.row-actions button.danger.armed {
+  background: rgba(229, 72, 77, 0.12);
+}
+
 .empty {
   text-align: center;
   color: var(--fg-dim);

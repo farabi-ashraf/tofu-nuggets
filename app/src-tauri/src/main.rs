@@ -48,6 +48,7 @@ fn main() {
             hover::get_current_nugget,
             editor::get_current_edit,
             editor::save_nugget,
+            editor::delete_nugget,
             links::open_in_explorer,
             links::open_external,
             mainwin::list_nuggets,

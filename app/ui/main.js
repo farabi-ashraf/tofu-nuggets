@@ -36,6 +36,7 @@ function row(entry) {
     <div class="row-actions">
       <button data-act="open" title="Show in Explorer">Open</button>
       <button data-act="edit" title="Edit note">Edit</button>
+      <button data-act="del" class="danger" title="Delete note">Delete</button>
     </div>`;
   li.querySelector(".name").textContent = entry.name;
   li.querySelector(".when").textContent = when(entry.modified_ms);
@@ -48,6 +49,23 @@ function row(entry) {
   });
   li.querySelector('[data-act="edit"]').addEventListener("click", () => {
     invoke("edit_nugget", { path: entry.path }).catch(() => {});
+  });
+  // Two-step confirm: first click arms the button, second click deletes.
+  const delBtn = li.querySelector('[data-act="del"]');
+  let armTimer = null;
+  delBtn.addEventListener("click", () => {
+    if (!delBtn.classList.contains("armed")) {
+      delBtn.classList.add("armed");
+      delBtn.textContent = "Sure?";
+      armTimer = setTimeout(() => {
+        delBtn.classList.remove("armed");
+        delBtn.textContent = "Delete";
+      }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    // List refreshes via the nuggets:changed emit.
+    invoke("delete_nugget", { path: entry.path }).catch(() => {});
   });
   return li;
 }

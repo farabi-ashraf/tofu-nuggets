@@ -8,7 +8,9 @@
 - Global hotkey on selected desktop icon → rich text editor (bold/italic, bullets, checkable todos, clickable URLs).
 - File-to-file links: link another file/folder inside a note; clicking opens Explorer at target.
 - Sidecar storage (`.nuggets` hidden folders), SQLite cache index.
-- Main window: list of all annotated items.
+- Main window: list of all annotated items, with per-row Open / Edit / Delete
+  (two-step confirm). Saving an emptied note also removes it (sidecar deleted,
+  badge + hover state go with it).
 - Accessibility: overlay font size (S/M/L/XL), panel scale, dark/light/system theme, Reduced Motion + High Contrast respect (see ARCHITECTURE.md).
 - Tray icon: open, pause, settings (hotkey, autostart, accessibility, badges), quit.
 - Performance budget per ARCHITECTURE.md: ~0% CPU idle, core RAM ~15–20 MB, icon count must not affect hover cost.
@@ -69,7 +71,14 @@
                                         with the new state wiring + badge toggle. Tray gained
                                         "Settings…". Deferred: title-bar theme sync (cosmetic),
                                         live tray-click + badge-off not machine-clicked.
-7. Polish + installer (NSIS) ✅*     → verified 2026-07-18 (this machine, not fresh VM):
+7. Polish + installer (NSIS) ✅*     → re-done 2026-07-18 with nugget deletion: empty save
+                                        removes the sidecar (verified live: editor shows
+                                        "note removed", sidecar + empty .nuggets dir gone,
+                                        badge/hover die on next refresh); main-window Delete
+                                        button with two-step "Sure?" confirm (arm state,
+                                        3 s disarm, delete_nugget drops sidecar + index and
+                                        emits nuggets:changed — all machine-verified).
+                                        Original M7 verification (this machine, not fresh VM):
                                         NSIS per-user installer built (2.9 MB, exe 11.5 MB,
                                         multi-size icon); silent install → app runs →
                                         silent uninstall leaves no dir/registry/shortcut
