@@ -49,6 +49,10 @@ noteEl.addEventListener("click", (e) => {
     invoke("open_in_explorer", { path }).catch(flashError);
   } else if (/^https?:/i.test(href)) {
     invoke("open_external", { url: href }).catch(flashError);
+  } else if (/^\S+\.\S{2,}/.test(href) && !href.includes(":")) {
+    // Legacy scheme-less link ("example.com") from before the editor
+    // normalized URLs: try it as https.
+    invoke("open_external", { url: `https://${href}` }).catch(flashError);
   } else {
     // Empty/unknown href (e.g. a link whose target was stripped): say so
     // instead of silently doing nothing.

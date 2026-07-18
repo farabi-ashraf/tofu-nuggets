@@ -23,6 +23,8 @@ pub struct Settings {
     pub high_contrast: bool,
     /// Draw the badge dots on tagged icons.
     pub badges: bool,
+    /// Global note hotkey, tauri shortcut syntax (e.g. "ctrl+shift+n").
+    pub hotkey: String,
 }
 
 impl Default for Settings {
@@ -34,6 +36,7 @@ impl Default for Settings {
             reduced_motion: false,
             high_contrast: false,
             badges: true,
+            hotkey: "ctrl+shift+n".into(),
         }
     }
 }
@@ -75,14 +78,29 @@ pub fn get_settings(state: State<Shared>) -> Settings {
 }
 
 #[tauri::command]
-pub fn set_settings(app: AppHandle, state: State<Shared>, settings: Settings) {
+pub fn set_settings(
+    app: AppHandle,
+    state: State<Shared>,
+    settings: Settings,
+) -> Result<(), String> {
     let next = settings.normalized();
+    // A changed hotkey must actually register before it is persisted; on
+    // failure the old binding stays live and the caller gets the error.
+    let old_hotkey = state
+        .lock()
+        .map(|g| g.hotkey.clone())
+        .unwrap_or_else(|_| "ctrl+shift+n".into());
+    if next.hotkey != old_hotkey {
+        crate::hotkey::reregister(&app, &old_hotkey, &next.hotkey)?;
+        crate::logfile::log(&app, &format!("hotkey changed to '{}'", next.hotkey));
+    }
     if let Ok(mut g) = state.lock() {
         *g = next.clone();
     }
     write(&app, &next);
     // Every window re-applies live (theme.js listener).
     let _ = app.emit("settings:changed", next);
+    Ok(())
 }
 
 /// Open (or focus) the settings window. Called from the tray, which runs on a
@@ -99,7 +117,7 @@ pub fn show(app: &AppHandle) {
             let _ = win.show();
             let _ = win.set_focus();
         }
-        Err(e) => eprintln!("settings window create failed: {e}"),
+        Err(e) => crate::logfile::log(app, &format!("settings window create failed: {e}")),
     }
 }
 
@@ -143,6 +161,7 @@ mod tests {
         assert!(d.badges);
         assert!(!d.reduced_motion);
         assert!(!d.high_contrast);
+        assert_eq!(d.hotkey, "ctrl+shift+n");
     }
 
     #[test]
@@ -194,6 +213,7 @@ mod tests {
             reduced_motion: true,
             high_contrast: true,
             badges: false,
+            hotkey: "ctrl+alt+j".into(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
@@ -203,5 +223,6 @@ mod tests {
         assert!(back.reduced_motion);
         assert!(back.high_contrast);
         assert!(!back.badges);
+        assert_eq!(back.hotkey, "ctrl+alt+j");
     }
 }

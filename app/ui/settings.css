@@ -141,6 +141,31 @@ input[type="range"] {
   cursor: pointer;
 }
 
+.hotkey-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: calc(13px * var(--font-scale));
+  cursor: pointer;
+  text-align: center;
+}
+
+.hotkey-input.capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hotkey-input:focus {
+  outline: none;
+}
+
+.group .hint {
+  margin-top: 8px;
+}
+
 .toggles {
   display: flex;
   flex-direction: column;

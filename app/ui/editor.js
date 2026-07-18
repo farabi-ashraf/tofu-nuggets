@@ -82,8 +82,11 @@ function runCommand(cmd) {
         chain.unsetLink().run();
         break;
       }
-      const url = window.prompt("Link URL:");
+      const raw = window.prompt("Link URL:");
+      if (!raw) break;
+      const url = normalizeUrl(raw);
       if (url) chain.setLink({ href: url }).run();
+      else saveState.textContent = `not a valid link: ${raw}`;
       break;
     }
     case "linkFile":
@@ -93,6 +96,18 @@ function runCommand(cmd) {
       linkTarget(true);
       break;
   }
+}
+
+// Normalize a user-entered web link: bare "example.com" gets https://
+// prefixed, anything with a scheme passes through, garbage returns null.
+// Without this, scheme-less hrefs are dead in the overlay (it only opens
+// http(s) and nugget: links).
+function normalizeUrl(raw) {
+  const url = raw.trim();
+  if (!url) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
+  if (/^\S+\.\S{2,}/.test(url)) return `https://${url}`;
+  return null;
 }
 
 // Pick a file/folder and insert a nugget:// link naming it; clicking that
@@ -146,6 +161,8 @@ function openLink(href) {
     });
   } else if (/^https?:/i.test(href)) {
     invoke("open_external", { url: href }).catch(() => {});
+  } else if (/^\S+\.\S{2,}/.test(href) && !href.includes(":")) {
+    invoke("open_external", { url: `https://${href}` }).catch(() => {});
   }
 }
 

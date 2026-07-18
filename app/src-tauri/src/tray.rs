@@ -7,7 +7,14 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::appstate::Paused;
-use crate::{mainwin, settings};
+use crate::{logfile, mainwin, settings};
+
+/// Window creation is only reliable from a plain worker thread (see
+/// ARCHITECTURE.md build() deadlock notes) — tray handlers marshal onto one.
+fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) + Send + 'static) {
+    let app = app.clone();
+    std::thread::spawn(move || f(&app));
+}
 
 const OPEN: &str = "open";
 const PAUSE: &str = "pause";
@@ -43,12 +50,18 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            OPEN => mainwin::show(app),
+            OPEN => {
+                logfile::log(app, "tray: open clicked");
+                on_worker(app, mainwin::show);
+            }
             PAUSE => {
                 let paused = app.state::<Paused>().toggle();
                 eprintln!("hover {}", if paused { "paused" } else { "resumed" });
             }
-            SETTINGS => settings::show(app),
+            SETTINGS => {
+                logfile::log(app, "tray: settings clicked");
+                on_worker(app, settings::show);
+            }
             AUTOSTART => {
                 let mgr = app.autolaunch();
                 let now_on = mgr.is_enabled().unwrap_or(false);
@@ -64,7 +77,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                mainwin::show(tray.app_handle());
+                on_worker(tray.app_handle(), mainwin::show);
             }
         })
         .build(app)?;

@@ -45,7 +45,9 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
 
 ### 3. Note capture (editor window) — implemented (Milestone 3)
 
-- Global hotkey `Ctrl+Shift+N` (`tauri-plugin-global-shortcut`): targets the icon under the cursor, falls back to the UIA-selected icon. Tray-menu entry comes with M5; shell context menu stays post-MVP.
+- Global hotkey (`tauri-plugin-global-shortcut`, default `Ctrl+Shift+N`): targets the icon under the cursor, falls back to the UIA-selected icon. Tray-menu entry comes with M5; shell context menu stays post-MVP.
+- **Hotkey is settings-driven and re-registerable** (`hotkey.rs`, post-M7): registered in setup from `settings.hotkey`; a registration failure (combination already taken by another app — a real support case) is logged and non-fatal so the user can rebind in Settings. `set_settings` re-registers before persisting and restores the old binding on failure. The handler marshals onto a plain `std::thread` (with COM init for UIA) before opening the editor — same safe-window-creation rule as everywhere else.
+- **Diagnostics**: `logfile.rs` appends to `%APPDATA%\com.tofunuggets.app\tofu.log` (capped ~512 KB). The app is headless in the tray on installed machines, so this file is the only way remote users can report silent failures (hotkey clash, UIA misses, window-creation errors, tray clicks are all logged).
 - Editor: TipTap (StarterKit + Link + TaskList/TaskItem + Placeholder) in a dark undecorated Tauri window, Vite-built (`ui/` is now an npm package; `npm run build` must run before `cargo build` since assets embed from `ui/dist`). Marks: bold/italic, bullets, checkable todos, hyperlinks. Ctrl+S saves, Esc saves-and-closes.
 - `save_nugget` command writes the sidecar (preserving `created_ms`) and upserts the index; badges pick the change up on their next 2 s refresh.
 - File links (implemented, Milestone 4): editor 📄/📁 buttons use `tauri-plugin-dialog` to pick a file/folder, inserting a TipTap link with href `nugget://open?path=<encoded abs path>` and the basename as text. JS decodes the path and calls backend commands (`links.rs`): `open_in_explorer` (folder → open it, file → `explorer /select`) and `open_external` (http(s) → default browser), both via `ShellExecuteW`. Panel intercepts link clicks (it can't navigate); the editor follows links on Ctrl+click.
@@ -157,3 +159,6 @@ so a partial/old file backfills from defaults rather than failing to load.
 ## Process model
 
 Single background process, tray icon, autostart (registry Run key, user-toggleable). Tray menu: open main window, pause overlay, settings, quit.
+
+- **Single instance** (`tauri-plugin-single-instance`, registered first): a second launch (autostart + manual start, double-click) hands off to the running instance — which opens the main window — instead of spawning a duplicate hover engine that clashes on the global hotkey. This exact duplicate-instance state was observed in the wild before the guard existed.
+- **Tray handlers must not build windows on their own thread**: `WebviewWindowBuilder::build()` is only reliable from a plain worker thread (see §2 findings / M5 deadlock notes), so the tray's Open/Settings handlers and the single-instance callback all `std::thread::spawn` before calling `mainwin::show` / `settings::show`. Verified: main window opens from this path.

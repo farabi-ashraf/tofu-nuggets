@@ -93,3 +93,15 @@
 ```
 
 Milestone 0 is a go/no-go gate: if desktop hover detection proves unreliable, fall back to the Explorer infotip shell-extension approach before building anything else.
+
+## Post-MVP hardening (2026-07-18, after first external install on Win 10)
+
+- Web links normalized on insert (`example.com` → `https://example.com`); overlay/editor
+  open legacy scheme-less links as https instead of showing "no target".
+- Hotkey customizer in Settings (capture field, Ctrl/Alt/Win + key). Registration failure
+  (combination taken by another app) is logged and non-fatal; rebinding re-registers live
+  and rolls back on failure. Verified E2E: rebind → new combo fires, old dead.
+- Single-instance guard: second launch opens the main window of the running instance
+  (duplicate instances + self-clashing hotkey observed before the fix).
+- Tray Open/Settings handlers create windows from a worker thread (build() deadlock rule).
+- Debug log at `%APPDATA%\com.tofunuggets.app\tofu.log` for remote failure reports.

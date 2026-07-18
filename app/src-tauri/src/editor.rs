@@ -93,9 +93,12 @@ fn remove_nugget(
 /// Hotkey entry: open the editor for the icon under the cursor, falling back
 /// to the selected desktop icon. Runs on the main thread (shortcut handler).
 pub fn open_for_target(app: &AppHandle) {
-    let Ok(uia) = DesktopUia::new() else {
-        eprintln!("editor: UIA init failed");
-        return;
+    let uia = match DesktopUia::new() {
+        Ok(u) => u,
+        Err(e) => {
+            crate::logfile::log(app, &format!("editor: UIA init failed: {e}"));
+            return;
+        }
     };
 
     let mut pt = windows::Win32::Foundation::POINT::default();
@@ -107,16 +110,20 @@ pub fn open_for_target(app: &AppHandle) {
     let target = under_cursor.or_else(|| uia.selected_icon());
 
     let Some(icon) = target else {
-        eprintln!("editor: no desktop icon under cursor or selected");
+        crate::logfile::log(app, "editor: no desktop icon under cursor or selected");
         return;
     };
     let Some(path) = icon.path.clone() else {
-        eprintln!(
-            "editor: '{}' has no filesystem path (virtual icon)",
-            icon.name
+        crate::logfile::log(
+            app,
+            &format!(
+                "editor: '{}' has no filesystem path (virtual icon)",
+                icon.name
+            ),
         );
         return;
     };
+    crate::logfile::log(app, &format!("editor: opening for '{}'", icon.name));
     open_editor(app, &icon.name, path);
 }
 
@@ -153,7 +160,7 @@ fn open_editor(app: &AppHandle, name: &str, path: std::path::PathBuf) {
             let _ = win.show();
             let _ = win.set_focus();
         }
-        Err(e) => eprintln!("editor: create failed: {e}"),
+        Err(e) => crate::logfile::log(app, &format!("editor: create failed: {e}")),
     }
 }
 

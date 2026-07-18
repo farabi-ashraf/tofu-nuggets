@@ -4,9 +4,11 @@ mod appstate;
 mod badges;
 mod desktop;
 mod editor;
+mod hotkey;
 mod hover;
 mod index;
 mod links;
+mod logfile;
 mod mainwin;
 mod overlay;
 mod settings;
@@ -18,24 +20,20 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 use appstate::Paused;
 
 fn main() {
-    let hotkey: Shortcut = "ctrl+shift+n".parse().expect("valid hotkey");
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([hotkey])
-                .expect("register hotkey")
-                .with_handler(move |app, shortcut, event| {
-                    if event.state() == ShortcutState::Pressed && *shortcut == hotkey {
-                        editor::open_for_target(app);
-                    }
-                })
-                .build(),
-        )
+        // Must be the first plugin: a second launch (autostart + manual, or
+        // double-click) hands off to the running instance instead of starting
+        // a duplicate hover engine and clashing on the hotkey.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            logfile::log(app, "second launch: opening main window");
+            let app = app.clone();
+            std::thread::spawn(move || mainwin::show(&app));
+        }))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -78,6 +76,18 @@ fn main() {
 
             let settings: settings::Shared = Arc::new(Mutex::new(settings::load(app.handle())));
             app.manage(settings.clone());
+
+            // Hotkey comes from settings; a failed registration (clash with
+            // another app) must not kill the app — the user can pick a
+            // different combination in Settings.
+            let hk = settings
+                .lock()
+                .map(|s| s.hotkey.clone())
+                .unwrap_or_else(|_| "ctrl+shift+n".into());
+            match hotkey::register(app.handle(), &hk) {
+                Ok(()) => logfile::log(app.handle(), &format!("startup: hotkey '{hk}' registered")),
+                Err(e) => logfile::log(app.handle(), &format!("startup: {e}")),
+            }
 
             let paused = app.state::<Paused>().inner().clone();
             hover::spawn(app.handle().clone(), paused.clone());
