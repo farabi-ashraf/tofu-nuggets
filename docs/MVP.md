@@ -105,3 +105,6 @@ Milestone 0 is a go/no-go gate: if desktop hover detection proves unreliable, fa
   (duplicate instances + self-clashing hotkey observed before the fix).
 - Tray Open/Settings handlers create windows from a worker thread (build() deadlock rule).
 - Debug log at `%APPDATA%\com.tofunuggets.app\tofu.log` for remote failure reports.
+
+Win 10 field issue resolved: missing WebView2 Runtime (tester installed the Evergreen
+Standalone Installer manually). Next version's work order: **`docs/V0.1.1.md`**.

@@ -5,9 +5,11 @@ Desktop overlay app for Windows: hover over a file/folder icon on the desktop �
 ## Key docs — read before large changes
 
 - `MEMORY.md` — session handoff: settled decisions, status, next step. **Read first in a new session.**
+- `docs/V0.1.1.md` — current work order: 0.1.1 fixes + updater/multi-platform/uninstall plans (owner instructions)
 - `docs/FEASIBILITY.md` — market research, free-vs-paid decision, differentiators
 - `docs/ARCHITECTURE.md` — stack (Tauri 2 + Rust), hover detection, badge layer, performance budget, accessibility, storage design
 - `docs/MVP.md` — scope, explicit non-goals, milestones with verification criteria
+- `docs/GIT-GUIDE.md` — owner-facing git/session workflow guide; keep in sync with practice
 
 ## Stack
 
