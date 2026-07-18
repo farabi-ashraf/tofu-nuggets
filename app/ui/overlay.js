@@ -46,11 +46,28 @@ noteEl.addEventListener("click", (e) => {
     } catch {
       return;
     }
-    invoke("open_in_explorer", { path }).catch(() => {});
+    invoke("open_in_explorer", { path }).catch(flashError);
   } else if (/^https?:/i.test(href)) {
-    invoke("open_external", { url: href }).catch(() => {});
+    invoke("open_external", { url: href }).catch(flashError);
+  } else {
+    // Empty/unknown href (e.g. a link whose target was stripped): say so
+    // instead of silently doing nothing.
+    flashError("Link has no target — re-add it in the editor");
   }
 });
+
+// Briefly show a link error in the path line, then restore it.
+let flashTimer = null;
+function flashError(msg) {
+  clearTimeout(flashTimer);
+  const restore = pathEl.dataset.real ?? pathEl.textContent;
+  pathEl.dataset.real = restore;
+  pathEl.textContent = String(msg).split("\n")[0];
+  flashTimer = setTimeout(() => {
+    pathEl.textContent = restore;
+    delete pathEl.dataset.real;
+  }, 2500);
+}
 
 // Todo checkboxes are interactive in the panel; persist toggles back to disk.
 noteEl.addEventListener("change", (e) => {

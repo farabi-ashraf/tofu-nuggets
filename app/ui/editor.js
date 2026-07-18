@@ -26,7 +26,13 @@ const editor = new Editor({
   element: document.getElementById("editor"),
   extensions: [
     StarterKit,
-    Link.configure({ openOnClick: false }),
+    // nugget:// must be allowlisted or TipTap's URI validation strips file
+    // links to href="" the next time a note is opened and saved.
+    Link.configure({
+      openOnClick: false,
+      protocols: ["nugget"],
+      isAllowedUri: (url, ctx) => url.startsWith("nugget://") || ctx.defaultValidate(url),
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Placeholder.configure({
@@ -167,7 +173,13 @@ async function save() {
 
 async function saveAndClose() {
   if (dirty) await save();
-  getCurrentWindow().close();
+  // Surface close failures (e.g. a missing window permission) instead of
+  // silently staying open.
+  getCurrentWindow()
+    .close()
+    .catch((e) => {
+      saveState.textContent = `close failed: ${e}`;
+    });
 }
 
 document.getElementById("save-btn").addEventListener("click", save);

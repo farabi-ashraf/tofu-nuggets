@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default capability for app windows",
   "windows": ["overlay", "editor", "main", "settings"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
 }
