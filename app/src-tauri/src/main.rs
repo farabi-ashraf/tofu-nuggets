@@ -23,6 +23,35 @@ use tauri_plugin_autostart::MacosLauncher;
 
 use appstate::Paused;
 
+/// No webview window can be built — almost always a missing/broken WebView2
+/// Runtime (docs/V0.1.1.md A1). A webview is unavailable by definition, so
+/// this must be a native dialog; offer the runtime download page.
+fn webview_missing_alert() {
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_ICONERROR, MB_YESNO, SHOW_WINDOW_CMD, SW_SHOWNORMAL,
+    };
+    unsafe {
+        let choice = MessageBoxW(
+            None,
+            w!("Tofu Nuggets could not start because the Microsoft WebView2 Runtime is missing or not working.\n\nInstall the WebView2 Runtime (Evergreen), then start Tofu Nuggets again.\n\nOpen the download page now?"),
+            w!("Tofu Nuggets — WebView2 Runtime required"),
+            MB_YESNO | MB_ICONERROR,
+        );
+        if choice == IDYES {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                w!("https://developer.microsoft.com/en-us/microsoft-edge/webview2/"),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SHOW_WINDOW_CMD(SW_SHOWNORMAL.0),
+            );
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         // Must be the first plugin: a second launch (autostart + manual, or
@@ -56,8 +85,17 @@ fn main() {
         ])
         .setup(|app| {
             // Warm overlay at startup; the hover engine destroys it after
-            // idle and recreates it on demand.
-            overlay::create(app.handle())?;
+            // idle and recreates it on demand. Failure here is the
+            // WebView2-missing signature ("tray alive, all windows dead") —
+            // tell the user with a native dialog instead of dying silently.
+            if let Err(e) = overlay::create(app.handle()) {
+                logfile::log(
+                    app.handle(),
+                    &format!("startup: overlay create failed: {e}"),
+                );
+                webview_missing_alert();
+                std::process::exit(1);
+            }
 
             // Silence the desktop's native infotips so our panel is the sole
             // hover surface (re-applied by the badge layer after Explorer

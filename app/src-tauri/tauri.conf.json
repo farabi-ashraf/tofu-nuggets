@@ -22,6 +22,9 @@
     "shortDescription": "Hover notes for your desktop icons",
     "longDescription": "Hover over a desktop file or folder to see the note you left on it. Rich text nuggets with todos and file links, created with a global hotkey, stored beside your files.",
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser"
       }
