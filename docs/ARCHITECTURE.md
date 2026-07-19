@@ -96,8 +96,10 @@ Follow-up: the editor window currently persists once created (~380 MB WebView2).
 
 Small dot/glyph on a corner of each tagged icon so users spot annotated items at a glance.
 
-- One full-desktop, click-through layered window (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`), per-pixel alpha via `UpdateLayeredWindow`, drawn natively (GDI+/Direct2D) — no webview involved, near-zero cost between redraws.
-- Badge positions come from tagged icons' bounding rects (UIA). Refresh only while desktop is foreground: on focus gain, every few seconds, and after our own note create/delete. Hidden entirely when desktop not foreground.
+- One full-desktop, click-through layered TOPMOST window (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`), per-pixel alpha via `UpdateLayeredWindow`, drawn natively (GDI) — no webview involved, near-zero cost between redraws.
+- Badge positions come from tagged icons' bounding rects (UIA).
+- **Occlusion model (0.1.1 A2)**: the layer stays shown; each dot is individually occlusion-tested against visible, non-cloaked, non-minimized top-level windows (`EnumWindows` + `DWMWA_CLOAKED`) and skipped while any window overlaps its pixels — dots never draw over applications and persist whenever the desktop is visible (no show/hide on focus changes). `SetWinEventHook` (`EVENT_SYSTEM_FOREGROUND` + `EVENT_OBJECT_LOCATIONCHANGE`, coalesced via an 80 ms one-shot timer) re-runs the occlusion pass within ~100 ms of any window move; the 2 s timer refreshes icon/sidecar state, skipping the UIA walk while one window covers the whole virtual screen. Repaints are skipped when the visible-dot set is unchanged.
+- Rejected (0.1.1 A2 spike, `spikes/badge-reparent`): reparenting the layer into the desktop z-band (Progman/`SHELLDLL_DefView`) — Win11 26200 does not composite foreign windows there (layered/child/shaped windows never render; plain ones only erratically).
 - Settings: toggle on/off, badge corner, badge size (tied to accessibility scale).
 - Rejected: `IShellIconOverlayIdentifier` shell overlays — only 15 system-wide slots (Dropbox/OneDrive contention), requires shell extension, affects Explorer too.
 

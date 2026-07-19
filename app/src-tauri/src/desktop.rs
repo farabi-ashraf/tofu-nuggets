@@ -178,23 +178,6 @@ pub fn suppress_desktop_infotips() -> bool {
     true
 }
 
-/// True while the desktop itself is the foreground window (icons visible and
-/// interactive) — the gate for badge visibility and fast hover polling.
-pub fn desktop_is_foreground() -> bool {
-    unsafe {
-        let fg = GetForegroundWindow();
-        if fg.is_invalid() {
-            return false;
-        }
-        let mut class = [0u16; 64];
-        let n = GetClassNameW(fg, &mut class) as usize;
-        matches!(
-            String::from_utf16_lossy(&class[..n]).as_str(),
-            "Progman" | "WorkerW"
-        )
-    }
-}
-
 pub fn desktop_dirs() -> Vec<PathBuf> {
     unsafe fn known(id: *const GUID) -> Option<PathBuf> {
         let pw = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }.ok()?;
