@@ -4,7 +4,8 @@
 
 ## Status
 
-- **⚠ 2026-07-19 drive incident (resolve before building)**: E: (USB SSD, Crucial X9 Pro) volume flagged `Full Repair Needed`; writes into `app/src-tauri/target/debug` fail with "fatal device hardware error" (os error 483) → cargo cannot build. Physical disk reports Healthy → likely filesystem corruption (unsafe disconnect), localized to `target\debug`. Repo itself fine: `git fsck` clean, commits/pushes work. **A1 code changes are UNTESTED on branch `wip-a1-backup` (0f39e3f, pushed).** Owner must run elevated `chkdsk E: /f` (or replug drive first). After repair: verify build, then continue A1 verification below.
+- **Drive incident RESOLVED (2026-07-20)**: repo now lives at `F:\Claude\tofu-nuggets` (moved off the failing E: volume). Debug + release builds verified clean on F:. Only residue was LF/CRLF churn on 3 files after the move — normalized via `git checkout --`, no content changes.
+- **A1 VERIFIED (2026-07-20)**: startup guard exercised via temp forced-fail in `overlay::create` (env-gated, reverted) — native MessageBox appeared with correct title/text, "No" → clean exit, failure line written to tofu.log. Installer rebuilt: 2.9 MB → 4.66 MB (embedded WebView2 bootstrapper; build log shows fwlink 2124703 download+embed). fmt/clippy/23 tests clean. Merged `wip-a1-backup` → `main`.
 - **Phase**: **MVP (0.1.0) complete + hardened.** Win 10 field issue RESOLVED: missing WebView2 Runtime — tester fixed it by installing the Evergreen Standalone Installer manually, then reinstalling. Our `downloadBootstrapper` default can fail silently offline → 0.1.1 switches to `embedBootstrapper`.
 - **Next version**: **0.1.1 — work order in `docs/V0.1.1.md` (owner instructions, read it first).** Fixes: WebView2 embed + startup guard, persistent badges via reparent-under-WorkerW (kills alt-tab flicker AND over-window bleed), panel Edit/✕ buttons, "Logitech G HUB" icon investigation. Infra: GitHub updater pipeline (tauri-plugin-updater + tauri-action CI + tray "Check for updates"), multi-platform policy (one branch, CI matrix — never per-platform branches), in-app "Delete all notes" (uninstaller must never sweep sidecars).
 - **GitHub**: repo published **private** at `https://github.com/farabi-ashraf/tofu-nuggets` (2026-07-19). Default branch `main` (renamed from `master`). Full history pushed. `README.md` added; `.claude/settings.local.json` untracked + gitignored. **All history is on GitHub (private) — before going public, run the B4 content-review checklist in `docs/V0.1.1.md`** (strip FEASIBILITY/MEMORY/V0.1.1 if wanted). This completes B1 step 1 of the 0.1.1 work order; updater plumbing (signing, plugin, tray, CI, public releases) still pending.
@@ -18,7 +19,7 @@
 - Rust via rustup. **Default toolchain now `stable-x86_64-pc-windows-msvc`**; VS Build Tools 2022 + Win 11 SDK installed via winget (2026-07-17). App uses `windows` 0.62. The old GNU-toolchain spike keeps `windows` pinned to 0.58 (raw-dylib/dlltool gap) — leave it.
 - App transparency stack is subtle — read ARCHITECTURE.md §2 findings before touching overlay window code (`webview2-com` + aliased `windows-core` 0.61 dep is load-bearing).
 - Node v24 + npm available (needed for TipTap/Vite in Milestone 3).
-- Repo on E: drive (no ownership recording) — `safe.directory` exception added to global git config.
+- Repo moved to `F:\Claude\tofu-nuggets` (2026-07-20, after E: drive filesystem corruption). `safe.directory` exception was added to global git config for the old E: path — add one for F: if git complains.
 - User's desktop is OneDrive-redirected; icons split across OneDrive Desktop + Public Desktop.
 
 ## Settled decisions (do not re-ask)
@@ -44,6 +45,8 @@
 - Discuss/clarify before building; owner answers scoping questions willingly.
 
 ## Session log
+
+- **2026-07-20**: A1 closed. Repo confirmed working on F: after E:-drive move (builds clean; LF/CRLF phantom diffs normalized). Guard test: temp env-gated forced failure in `overlay::create` (`TOFU_FAIL_OVERLAY`) → dialog verified on-screen via screenshot, "No" exits, tofu.log gets `startup: overlay create failed`. Gotcha: first test launch silently handed off to the *installed* running instance (single-instance plugin) — kill `tofu-nuggets` before runtime tests. Temp hook reverted before release build. Installer 4.66 MB with embedded bootstrapper. fmt/clippy/tests clean. Merged `wip-a1-backup` → `main`, next: A2 badge reparent spike on branch `wip-a2-badges`.
 
 - **2026-07-19 (7)**: First GitHub publish (owner's first time — guided). Created `README.md` (public-facing: pitch, features, how-it-works, tech stack, build-from-source, Windows-only, all-rights-reserved). Untracked `.claude/settings.local.json` → gitignored (commit `c09a9a6`). Renamed branch `master` → `main`, added remote, pushed to **private** repo `https://github.com/farabi-ashraf/tofu-nuggets`. Decisions: repo private for now (fixes pending); GitHub-create form left empty (README Off / No .gitignore / No license) to avoid non-fast-forward on first push; docs/ + MEMORY + CLAUDE all kept (private repo = safety net), review at publish-time via new **B4 checklist** in `docs/V0.1.1.md`. No app code touched. Advised owner: normal project docs (ARCHITECTURE/MVP/CLAUDE) are fine to publish; FEASIBILITY (strategy) + MEMORY (AI state) + V0.1.1 (raw notes) are the strip candidates. Marked B1 step 1 done in the 0.1.1 work order.
 
