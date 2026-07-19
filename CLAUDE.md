@@ -10,6 +10,7 @@ Desktop overlay app for Windows: hover over a file/folder icon on the desktop �
 - `docs/ARCHITECTURE.md` — stack (Tauri 2 + Rust), hover detection, badge layer, performance budget, accessibility, storage design
 - `docs/MVP.md` — scope, explicit non-goals, milestones with verification criteria
 - `docs/GIT-GUIDE.md` — owner-facing git/session workflow guide; keep in sync with practice
+- `README.md` — public-facing project readme (published to GitHub); keep accurate on feature/build changes
 
 ## Stack
 
@@ -29,6 +30,7 @@ Desktop overlay app for Windows: hover over a file/folder icon on the desktop �
 
 ## Conventions
 
+- Source on GitHub: single repo, default branch `main`, currently **private**. Never re-introduce per-platform branches (see `docs/V0.1.1.md` B2). Don't commit `.claude/settings.local.json` (gitignored).
 - Rust: `cargo fmt` + `cargo clippy` clean before commit.
 - Frontend: keep dependencies minimal; TipTap is the only large UI dependency budgeted.
 - Test on both Win 10 and Win 11 for anything touching UIA, DPI, or the overlay window.

@@ -6,6 +6,7 @@
 
 - **Phase**: **MVP (0.1.0) complete + hardened.** Win 10 field issue RESOLVED: missing WebView2 Runtime — tester fixed it by installing the Evergreen Standalone Installer manually, then reinstalling. Our `downloadBootstrapper` default can fail silently offline → 0.1.1 switches to `embedBootstrapper`.
 - **Next version**: **0.1.1 — work order in `docs/V0.1.1.md` (owner instructions, read it first).** Fixes: WebView2 embed + startup guard, persistent badges via reparent-under-WorkerW (kills alt-tab flicker AND over-window bleed), panel Edit/✕ buttons, "Logitech G HUB" icon investigation. Infra: GitHub updater pipeline (tauri-plugin-updater + tauri-action CI + tray "Check for updates"), multi-platform policy (one branch, CI matrix — never per-platform branches), in-app "Delete all notes" (uninstaller must never sweep sidecars).
+- **GitHub**: repo published **private** at `https://github.com/farabi-ashraf/tofu-nuggets` (2026-07-19). Default branch `main` (renamed from `master`). Full history pushed. `README.md` added; `.claude/settings.local.json` untracked + gitignored. **All history is on GitHub (private) — before going public, run the B4 content-review checklist in `docs/V0.1.1.md`** (strip FEASIBILITY/MEMORY/V0.1.1 if wanted). This completes B1 step 1 of the 0.1.1 work order; updater plumbing (signing, plugin, tray, CI, public releases) still pending.
 - **Owner guide**: `docs/GIT-GUIDE.md` — git/versioning/session workflow written for the owner; keep it in sync if the workflow changes. M7: NSIS per-user installer (2.9 MB) built via `npx @tauri-apps/cli build`; install→run→uninstall cycle verified clean on this machine; release-build budget measured (idle CPU 0.00%, core private 6.3 MB, WebView2 6→0 procs after idle release); right-edge flip unit-tested; clippy zero code lints.
 - **Next step**: remaining verification needs hardware: fresh-VM install test, Win 10, multi-monitor, DPI≠100%, autostart-survives-reboot. Then post-MVP roadmap (Explorer integration, more themes, search/tags — see MVP.md non-goals). Cosmetic TODO: title-bar theme sync (light theme keeps DWM-dark title bars). Editor webview RAM: editor window is destroyed on close since the allow-close fix, so its processes release with the last webview window — no separate idle-release needed.
 - **Build note**: frontend is Vite-built now — run `npm run build` in `app/ui` BEFORE `cargo build` (assets embed from `ui/dist`).
@@ -33,6 +34,7 @@
 | Performance | Hard budget: ~0% CPU idle, ~15–20 MB core RAM, WebView2 released after idle timeout, icon count must not affect hover cost | docs/ARCHITECTURE.md |
 | Accessibility | MVP includes font size S–XL, panel scale, dark/light/system themes, Reduced Motion + High Contrast respect | docs/ARCHITECTURE.md |
 | Settings storage | `settings.json` in app-data dir; serde-default backfill; applied live to all windows via `theme.js` + `settings:changed` | docs/ARCHITECTURE.md (Accessibility & theming) |
+| Source hosting | GitHub, single repo, default branch `main`, private until pre-public review done | docs/V0.1.1.md B1/B4 |
 
 ## Owner preferences (from conversations)
 
@@ -41,6 +43,8 @@
 - Discuss/clarify before building; owner answers scoping questions willingly.
 
 ## Session log
+
+- **2026-07-19 (7)**: First GitHub publish (owner's first time — guided). Created `README.md` (public-facing: pitch, features, how-it-works, tech stack, build-from-source, Windows-only, all-rights-reserved). Untracked `.claude/settings.local.json` → gitignored (commit `c09a9a6`). Renamed branch `master` → `main`, added remote, pushed to **private** repo `https://github.com/farabi-ashraf/tofu-nuggets`. Decisions: repo private for now (fixes pending); GitHub-create form left empty (README Off / No .gitignore / No license) to avoid non-fast-forward on first push; docs/ + MEMORY + CLAUDE all kept (private repo = safety net), review at publish-time via new **B4 checklist** in `docs/V0.1.1.md`. No app code touched. Advised owner: normal project docs (ARCHITECTURE/MVP/CLAUDE) are fine to publish; FEASIBILITY (strategy) + MEMORY (AI state) + V0.1.1 (raw notes) are the strip candidates. Marked B1 step 1 done in the 0.1.1 work order.
 
 - **2026-07-18 (6)**: Win 10 mystery closed: **missing WebView2 Runtime** (tester installed Evergreen Standalone manually → everything worked). Post-mortem note: app was tray-alive with webviews dead — meaning overlay::create's `?` in setup did NOT kill the app on their box as assumed; treat "tray alive, all windows dead" as the WebView2-missing signature. Wrote `docs/V0.1.1.md` (full 0.1.1 work order incl. badge reparent-under-WorkerW plan, updater-via-GitHub plan, uninstall data policy) and `docs/GIT-GUIDE.md` (owner tutorial). No code changed this session — docs only, per owner request ("plan first").
 
