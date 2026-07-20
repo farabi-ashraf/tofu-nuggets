@@ -12,6 +12,9 @@
 //! (foreground changes + window moves, throttled) keep the set current within
 //! ~100 ms; a 2 s timer handles icon-position/sidecar drift while the desktop
 //! is foreground. Zero work while nothing changes.
+//!
+//! Windows-only module (cfg-gated in main.rs; macOS gets a no-op stub until
+//! its own badge approach lands in Route 1).
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -23,6 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::appstate::Paused;
 use crate::desktop::{self, DesktopUia};
+use crate::icons::DesktopIcons;
 use crate::{settings, storage};
 
 const REFRESH_TIMER_ID: usize = 1;

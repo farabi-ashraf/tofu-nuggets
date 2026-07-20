@@ -4,7 +4,7 @@
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use crate::{desktop, editor, logfile};
+use crate::{editor, icons, logfile};
 
 pub fn register(app: &AppHandle, hotkey: &str) -> Result<(), String> {
     let sc: Shortcut = hotkey
@@ -15,10 +15,10 @@ pub fn register(app: &AppHandle, hotkey: &str) -> Result<(), String> {
             if event.state() == ShortcutState::Pressed {
                 logfile::log(app, "hotkey pressed");
                 // Window creation is only safe from a plain thread (see
-                // ARCHITECTURE.md); UIA needs COM on that thread.
+                // ARCHITECTURE.md); Windows UIA needs COM on that thread.
                 let app = app.clone();
                 std::thread::spawn(move || {
-                    desktop::init_com_for_thread();
+                    icons::init_thread();
                     editor::open_for_target(&app);
                 });
             }

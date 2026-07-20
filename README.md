@@ -12,32 +12,63 @@ the desktop is the foreground window.
 
 ## Status
 
-**v0.1.3 — beta, Windows-only.** Installers are published on the
+**v0.2.0 — beta, Windows-only.** Installers are published on the
 [Releases page](https://github.com/farabi-ashraf/tofu-nuggets/releases); installed
-copies self-update via the tray's "Check for updates…".
+copies self-update via the tray's "Check for updates…". A macOS port (Apple silicon)
+is in progress.
 
-## Features
+## Using Tofu Nuggets
 
-- **Hover to reveal** — glance a desktop icon, read your note. No clicking.
-- **Rich-text nuggets** — todos, links, and formatting via a TipTap editor.
-- **Global hotkey** — capture a note without breaking flow.
-- **Badge layer** — a subtle marker shows which icons carry a nugget.
-- **Sidecar storage** — notes live as files in hidden `.nuggets` folders; they are the
-  single source of truth. A SQLite index is only a rebuildable cache.
-- **Stays out of the way** — background app with a hard performance budget
-  (~0% CPU idle, small RAM footprint, icon count never affects hover cost).
+**Write a note** — press the global hotkey (default `Ctrl+Shift+N`) while the cursor
+is over a desktop icon, or with an icon selected. The editor opens for that item.
+You can also open any note from the main window's list.
+
+**The editor** — rich text via toolbar or shortcuts: bold, italic, bullet lists,
+todo checklists, and links (`Ctrl+K`). `Ctrl+S` saves, `Esc` saves and closes.
+Saving an emptied note deletes it (badge and panel disappear with it).
+
+**Link files and folders** — three ways to point a note at another item: the 📄/📁
+toolbar buttons open a picker, or just **drag files/folders from Explorer onto the
+editor** — each drop inserts a link named after the item. Clicking such a link in
+the hover panel opens Explorer at the target; in the editor, `Ctrl+Click` follows
+links.
+
+**Hover panel** — rest the cursor on an annotated desktop icon for a moment and the
+glassy panel appears beside it with your note rendered read-only; checkboxes are
+live, links clickable. Move away and it hides. ✕ closes it immediately, ✎ jumps to
+the editor.
+
+**Badges** — a small dot marks every desktop icon that carries a nugget, so you know
+what has notes without hovering. Dots hide under any window that overlaps them and
+can be turned off in Settings.
+
+**Main window** — tray icon → "Open Tofu Nuggets" (or launching the app again)
+lists every nugget with filter and per-row Open / Edit / Delete. The danger zone in
+Settings can delete all notes at once.
+
+**Settings** — font size (S–XL), panel scale, dark/light/system theme, hotkey
+rebinding, badge toggle, autostart. Reduced Motion and High Contrast system
+settings are respected. Changes apply live.
+
+**Tray** — pause/resume hover detection, open main window or settings, toggle
+autostart, check for updates, quit.
+
+**Your data** — every note is a small JSON "sidecar" file in a hidden `.nuggets`
+folder next to the item it describes (a folder's own note travels inside it).
+Sidecars are the single source of truth: the app's SQLite index is only a
+rebuildable cache, and uninstalling never deletes your notes.
 
 ## How it works
 
 Hover detection uses Windows **UI Automation** (`ElementFromPoint`) — no cross-process
-memory reads of Explorer's ListView. The overlay panel uses acrylic/vibrancy for the
-glassy look. Note content always lives in the sidecar files; the index can be deleted
-and rebuilt from them at any time.
+memory reads of Explorer's ListView. The overlay panel is a transparent, never-focused
+window; the glass look is CSS. Note content always lives in the sidecar files; the
+index can be deleted and rebuilt from them at any time.
 
 ## Tech stack
 
-- **Backend:** Rust + [Tauri 2](https://tauri.app/), the `windows` crate for Win32 / UI
-  Automation, `window-vibrancy` for acrylic.
+- **Backend:** Rust + [Tauri 2](https://tauri.app/); the `windows` crate for Win32 /
+  UI Automation behind a platform trait (`DesktopIcons`).
 - **Frontend:** webview UI with [TipTap](https://tiptap.dev/) for the rich-text editor.
 - **Storage:** sidecar JSON files (source of truth) + a SQLite cache index.
 
@@ -61,8 +92,10 @@ cargo tauri build
 
 ## Platform
 
-Windows 10 and Windows 11 only. The hover, DPI, and overlay code is Win32/UIA-specific;
-other platforms are out of scope for now.
+Windows 10 and Windows 11. A macOS port (macOS 14+, Apple silicon) is under way:
+the codebase is single-branch with platform code behind traits/`#[cfg]`, and CI
+compiles and tests every change on both platforms. macOS hover/badges are not
+functional yet.
 
 ## Security
 

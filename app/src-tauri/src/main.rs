@@ -1,11 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appstate;
+#[cfg(windows)]
 mod badges;
+// Badge layer is a Windows GDI layered window; the macOS equivalent comes in
+// a later Route 1 PR. Stub keeps main wiring identical on both platforms (B2).
+#[cfg(not(windows))]
+mod badges {
+    pub fn spawn(_paused: crate::appstate::Paused, _settings: crate::settings::Shared) {}
+}
+#[cfg(windows)]
 mod desktop;
+#[cfg(target_os = "macos")]
+mod desktop_mac;
 mod editor;
 mod hotkey;
 mod hover;
+mod icons;
 mod index;
 mod links;
 mod logfile;
@@ -26,7 +37,9 @@ use appstate::Paused;
 
 /// No webview window can be built — almost always a missing/broken WebView2
 /// Runtime (docs/V0.1.1.md A1). A webview is unavailable by definition, so
-/// this must be a native dialog; offer the runtime download page.
+/// this must be a native dialog; offer the runtime download page. Windows-only
+/// failure mode: macOS's WKWebView is part of the OS.
+#[cfg(windows)]
 fn webview_missing_alert() {
     use windows::core::{w, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -98,6 +111,7 @@ fn main() {
                     app.handle(),
                     &format!("startup: overlay create failed: {e}"),
                 );
+                #[cfg(windows)]
                 webview_missing_alert();
                 std::process::exit(1);
             }
@@ -105,9 +119,9 @@ fn main() {
             // Silence the desktop's native infotips so our panel is the sole
             // hover surface (re-applied by the badge layer after Explorer
             // restarts).
-            desktop::suppress_desktop_infotips();
+            icons::suppress_desktop_infotips();
 
-            let roots = desktop::desktop_dirs();
+            let roots = icons::desktop_dirs();
             // Redirect sidecars for unwritable parents (Public Desktop) into
             // the user's own desktop `.nuggets` (docs/V0.1.1.md A4). First
             // root is FOLDERID_Desktop.

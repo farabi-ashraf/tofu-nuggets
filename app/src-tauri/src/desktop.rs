@@ -1,10 +1,11 @@
-//! Desktop icon interop via Win32 + UI Automation.
+//! Windows implementation of `icons::DesktopIcons`: Win32 + UI Automation.
 //!
 //! Approach validated by spikes/hover-detect (Milestone 0): the desktop is a
 //! SysListView32 under Progman (or WorkerW after wallpaper-rotation setups);
 //! UIA ElementFromPoint identifies the icon under the cursor, and display
 //! names resolve to paths against the (possibly OneDrive-redirected) user
-//! desktop plus the public desktop.
+//! desktop plus the public desktop. Portable callers go through `crate::icons`;
+//! only the (Windows-only) badge layer uses this module directly.
 
 use std::path::PathBuf;
 
@@ -15,11 +16,15 @@ use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-#[derive(Clone, Debug)]
-pub struct DesktopIcon {
-    pub name: String,
-    pub rect: RECT,
-    pub path: Option<PathBuf>,
+use crate::icons::{DesktopIcons, Icon, IconRect};
+
+fn to_icon_rect(r: RECT) -> IconRect {
+    IconRect {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    }
 }
 
 pub struct DesktopUia {
@@ -39,66 +44,6 @@ impl DesktopUia {
             auto,
             dirs: desktop_dirs(),
         })
-    }
-
-    /// Icon under the given screen point, if that point is a desktop icon.
-    pub fn icon_at(&self, pt: POINT) -> Option<DesktopIcon> {
-        unsafe {
-            let el = self.auto.ElementFromPoint(pt).ok()?;
-            if !self.is_desktop_icon(&el) {
-                return None;
-            }
-            let name = el.CurrentName().ok()?.to_string();
-            let rect = el.CurrentBoundingRectangle().ok()?;
-            let path = resolve_path(&name, &self.dirs);
-            Some(DesktopIcon { name, rect, path })
-        }
-    }
-
-    /// All desktop icons (used by the badge layer).
-    pub fn list_icons(&self) -> Result<Vec<DesktopIcon>> {
-        let lv = find_desktop_listview().ok_or_else(|| {
-            Error::new(
-                windows::Win32::Foundation::E_FAIL,
-                "desktop SysListView32 not found",
-            )
-        })?;
-        let mut icons = Vec::new();
-        unsafe {
-            let root = self.auto.ElementFromHandle(lv)?;
-            let cond = self.auto.CreateTrueCondition()?;
-            let items = root.FindAll(TreeScope_Children, &cond)?;
-            for i in 0..items.Length()? {
-                let el = items.GetElement(i)?;
-                if el.CurrentControlType()? != UIA_ListItemControlTypeId {
-                    continue;
-                }
-                let name = el.CurrentName()?.to_string();
-                let rect = el.CurrentBoundingRectangle()?;
-                let path = resolve_path(&name, &self.dirs);
-                icons.push(DesktopIcon { name, rect, path });
-            }
-        }
-        Ok(icons)
-    }
-
-    /// Currently selected desktop icon, if any (UIA selection pattern).
-    pub fn selected_icon(&self) -> Option<DesktopIcon> {
-        let lv = find_desktop_listview()?;
-        unsafe {
-            let root = self.auto.ElementFromHandle(lv).ok()?;
-            let pat: IUIAutomationSelectionPattern =
-                root.GetCurrentPatternAs(UIA_SelectionPatternId).ok()?;
-            let sel = pat.GetCurrentSelection().ok()?;
-            if sel.Length().ok()? < 1 {
-                return None;
-            }
-            let el = sel.GetElement(0).ok()?;
-            let name = el.CurrentName().ok()?.to_string();
-            let rect = el.CurrentBoundingRectangle().ok()?;
-            let path = resolve_path(&name, &self.dirs);
-            Some(DesktopIcon { name, rect, path })
-        }
     }
 
     fn is_desktop_icon(&self, el: &IUIAutomationElement) -> bool {
@@ -122,6 +67,85 @@ impl DesktopUia {
                 .unwrap_or(false)
         }
     }
+}
+
+impl DesktopIcons for DesktopUia {
+    /// Icon under the given screen point, if that point is a desktop icon.
+    fn icon_at(&self, x: i32, y: i32) -> Option<Icon> {
+        unsafe {
+            let el = self.auto.ElementFromPoint(POINT { x, y }).ok()?;
+            if !self.is_desktop_icon(&el) {
+                return None;
+            }
+            let name = el.CurrentName().ok()?.to_string();
+            let rect = to_icon_rect(el.CurrentBoundingRectangle().ok()?);
+            let path = resolve_path(&name, &self.dirs);
+            Some(Icon { name, rect, path })
+        }
+    }
+
+    /// All desktop icons (used by the badge layer).
+    fn list_icons(&self) -> std::result::Result<Vec<Icon>, String> {
+        let lv = find_desktop_listview().ok_or("desktop SysListView32 not found")?;
+        let mut icons = Vec::new();
+        let scan = |icons: &mut Vec<Icon>| -> Result<()> {
+            unsafe {
+                let root = self.auto.ElementFromHandle(lv)?;
+                let cond = self.auto.CreateTrueCondition()?;
+                let items = root.FindAll(TreeScope_Children, &cond)?;
+                for i in 0..items.Length()? {
+                    let el = items.GetElement(i)?;
+                    if el.CurrentControlType()? != UIA_ListItemControlTypeId {
+                        continue;
+                    }
+                    let name = el.CurrentName()?.to_string();
+                    let rect = to_icon_rect(el.CurrentBoundingRectangle()?);
+                    let path = resolve_path(&name, &self.dirs);
+                    icons.push(Icon { name, rect, path });
+                }
+            }
+            Ok(())
+        };
+        scan(&mut icons).map_err(|e| e.to_string())?;
+        Ok(icons)
+    }
+
+    /// Currently selected desktop icon, if any (UIA selection pattern).
+    fn selected_icon(&self) -> Option<Icon> {
+        let lv = find_desktop_listview()?;
+        unsafe {
+            let root = self.auto.ElementFromHandle(lv).ok()?;
+            let pat: IUIAutomationSelectionPattern =
+                root.GetCurrentPatternAs(UIA_SelectionPatternId).ok()?;
+            let sel = pat.GetCurrentSelection().ok()?;
+            if sel.Length().ok()? < 1 {
+                return None;
+            }
+            let el = sel.GetElement(0).ok()?;
+            let name = el.CurrentName().ok()?.to_string();
+            let rect = to_icon_rect(el.CurrentBoundingRectangle().ok()?);
+            let path = resolve_path(&name, &self.dirs);
+            Some(Icon { name, rect, path })
+        }
+    }
+}
+
+pub fn new_icons() -> std::result::Result<DesktopUia, String> {
+    DesktopUia::new().map_err(|e| e.to_string())
+}
+
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut pt = POINT::default();
+    unsafe { GetCursorPos(&mut pt) }.ok()?;
+    Some((pt.x, pt.y))
+}
+
+pub fn virtual_screen_width() -> i32 {
+    unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }
+}
+
+pub fn init_thread() {
+    init_com_for_thread();
 }
 
 pub fn find_desktop_listview() -> Option<HWND> {
