@@ -26,10 +26,22 @@
 - **Pending verification (hardware-bound)**: fresh-VM install, Win 10, multi-monitor,
   DPI≠100%, autostart-after-reboot. Cosmetic: title-bar theme sync.
 
-## Next step — version-after-0.1.3 route decision (owner to confirm in new chat)
+## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1
 
-Owner floated three routes; recommendation given (2026-07-20): **Route 2 → stable →
-Route 1**, defer Route 3.
+Next session starts **Route 2** (drag-drop links). After it ships + stabilizes, call
+that the stable version, then start **Route 1** (macOS port). Route 3 deferred.
+
+**macOS distribution decision**: owner will NOT pay for an Apple Developer account yet.
+Beta distribution = unsigned GitHub Releases downloads: Tauri applies free ad-hoc
+signing automatically (mandatory on Apple silicon), but no notarization → Gatekeeper
+blocks first launch; testers need the documented bypass (System Settings → Privacy &
+Security → "Open Anyway"; on macOS 15+ the old right-click→Open bypass is gone).
+Acceptable for invited beta testers with instructions in the README/release notes.
+Revisit the $99/yr account (real signing + notarization) before any public macOS launch.
+The in-app updater's own signature (minisign keypair) is independent of Apple signing
+and keeps working.
+
+Original route analysis (for context):
 
 1. **Route 1 — macOS port** (mac 14–26, Apple-silicon testers waiting): heaviest.
    `DesktopIcons` trait extraction per B2, AX-API hover, Finder specifics, overlay/badge
