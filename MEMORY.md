@@ -51,11 +51,19 @@
   need restart). `resolve_path` moved to `icons.rs` (shared). `selected_icon` +
   `list_icons` still stubs. **Untested on hardware — CI compile only.**
 - AX hover PR #12 merged 2026-07-21 (hardware-untested).
-- **dmg artifact PR** (`wip-ci-dmg`): CI macOS job builds ad-hoc-signed arm64 `.dmg`
-  (`npx @tauri-apps/cli build --bundles dmg`, updater artifacts off — signing key is
-  release-only) and uploads as workflow artifact (14-day retention). `icon.png` added
-  to bundle icons (bundler composes the `.icns`). README: per-platform build prereqs
-  + macOS beta/Gatekeeper note.
+- dmg artifact PR #13 merged 2026-07-21: CI macOS job builds ad-hoc-signed arm64
+  `.dmg` (`npx @tauri-apps/cli build --bundles dmg`; beforeBuildCommand cleared in CI
+  — the CLI resolves its relative path from a different cwd than tauri-action;
+  updater artifacts off — signing key is release-only), uploads as workflow artifact
+  (14-day retention, ~5.8 MB verified). `icon.png` added to bundle icons (bundler
+  composes the `.icns`). README: per-platform build prereqs + macOS beta/Gatekeeper
+  note. upload-artifact bumped v4→v5 (Node 20 deprecation warning).
+- **NEXT: owner tests AX hover on Mini (planned 2026-07-22, work hours)** — sideload
+  steps in PR #13 body; checklist in PR #12 body: Accessibility prompt → grant +
+  relaunch → hotkey note on desktop file → hover. Watch: retina rect alignment
+  (panel offset ×2 = unit bug), hidden-extension name resolution, false hover
+  triggers in open Finder icon-view windows. Result decides next PR (AX fixes vs
+  overlay polish/badges).
 - Remaining Route 1 work after AX hover verified on Mini: macOS overlay/panel look,
   badge equivalent (needs list_icons via Finder AX tree), selected_icon, hotkey/tray/
   updater verification, release.yml macOS matrix + Gatekeeper docs at mac launch.

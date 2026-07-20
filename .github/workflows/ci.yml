@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload .dmg artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tofu-nuggets-macos-arm64-dmg
           path: app/src-tauri/target/release/bundle/dmg/*.dmg
