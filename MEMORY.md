@@ -26,10 +26,16 @@
 - **Pending verification (hardware-bound)**: fresh-VM install, Win 10, multi-monitor,
   DPI≠100%, autostart-after-reboot. Cosmetic: title-bar theme sync.
 
-## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1
+## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1; Route 3 deferred
 
-Next session starts **Route 2** (drag-drop links). After it ships + stabilizes, call
-that the stable version, then start **Route 1** (macOS port). Route 3 deferred.
+**Route 2 implemented (2026-07-21)**, PR #8 (`wip-drop-links`): dropping files/folders
+onto the open editor inserts `nugget://` links — same `insertPathLink` pipeline as the
+📄/📁 picker buttons. Webview-side only (`editor.js` via Tauri `onDragDropEvent` — API
+identical on macOS, no platform code; HTML5 drop never fires because Tauri intercepts).
+Accent-ring drop cue in `editor.css`. No new commands/events/permissions; no Rust
+change. After owner confirms stable → declare stable version → begin Route 1
+(macOS 14–26, Apple silicon; B2: extract `DesktopIcons` trait at port start, never
+per-platform branches).
 
 **macOS distribution decision**: owner will NOT pay for an Apple Developer account yet.
 Beta distribution = unsigned GitHub Releases downloads: Tauri applies free ad-hoc

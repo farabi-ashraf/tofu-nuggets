@@ -55,6 +55,15 @@ body {
   overflow: hidden;
 }
 
+/* Drag-drop cue: inset accent ring while a file/folder hovers the window. */
+body.drop-target::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+}
+
 .editor-shell {
   height: 100%;
   display: flex;

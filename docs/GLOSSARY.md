@@ -50,7 +50,7 @@
 | File | Owns |
 |---|---|
 | `overlay.html/js/css` | Hover panel rendering, link/checkbox handling |
-| `editor.html/js/css` | TipTap editor, toolbar, link insertion/normalization |
+| `editor.html/js/css` | TipTap editor, toolbar, link insertion/normalization, drag-drop of files/folders → `nugget://` links (Tauri drag-drop event, portable) |
 | `main.html/js/css` | All-nuggets list, filter, row actions, hotkey hint, data-lifecycle footer |
 | `settings.html/js/css` | Settings controls, hotkey capture, danger zone (delete all) |
 | `theme.js` | Single applier of font-scale/panel-scale/theme/motion/contrast to `<html>`; imported by every entry |
