@@ -1,6 +1,8 @@
 // Nugget editor: TipTap over the sidecar HTML. The Rust side opens this
 // window with a target item; we pull it on load (same pattern as the
-// overlay) and save via the save_nugget command.
+// overlay) and save via the save_nugget command. File/folder links come
+// from the picker buttons or OS drag-drop (Tauri drag-drop event; HTML5
+// drop never fires) — both feed the same nugget:// insert pipeline.
 
 import "./theme.js";
 import { Editor } from "@tiptap/core";
@@ -110,18 +112,10 @@ function normalizeUrl(raw) {
   return null;
 }
 
-// Pick a file/folder and insert a nugget:// link naming it; clicking that
-// link (in the hover panel) opens Explorer at the target.
-async function linkTarget(directory) {
-  let selected;
-  try {
-    selected = await openDialog({ multiple: false, directory });
-  } catch (e) {
-    saveState.textContent = `picker failed: ${e}`;
-    return;
-  }
-  if (!selected) return;
-  const path = Array.isArray(selected) ? selected[0] : selected;
+// Insert a nugget:// link naming a file/folder path; clicking that link
+// (in the hover panel) opens Explorer at the target. Shared by the
+// picker buttons and drag-drop.
+function insertPathLink(path) {
   const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
   const href = `nugget://open?path=${encodeURIComponent(path)}`;
   editor
@@ -133,6 +127,37 @@ async function linkTarget(directory) {
     ])
     .run();
 }
+
+// Pick a file/folder via the native dialog and link it.
+async function linkTarget(directory) {
+  let selected;
+  try {
+    selected = await openDialog({ multiple: false, directory });
+  } catch (e) {
+    saveState.textContent = `picker failed: ${e}`;
+    return;
+  }
+  if (!selected) return;
+  insertPathLink(Array.isArray(selected) ? selected[0] : selected);
+}
+
+// Files/folders dropped onto the window become nugget:// links, same
+// pipeline as the picker buttons. Tauri intercepts native drag-drop
+// (dragDropEnabled default) and delivers OS paths via its own event —
+// HTML5 drop events never fire, and this API is identical on macOS,
+// so keep this Tauri-only (no platform code here).
+const { getCurrentWebview } = window.__TAURI__.webview;
+getCurrentWebview().onDragDropEvent((event) => {
+  const kind = event.payload.type;
+  if (kind === "enter" || kind === "over") {
+    document.body.classList.add("drop-target");
+  } else if (kind === "leave") {
+    document.body.classList.remove("drop-target");
+  } else if (kind === "drop") {
+    document.body.classList.remove("drop-target");
+    for (const path of event.payload.paths || []) insertPathLink(path);
+  }
+});
 
 document.querySelector(".toolbar").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-cmd]");
