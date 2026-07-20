@@ -50,9 +50,15 @@
   backing scale; Accessibility prompt via `AXIsProcessTrustedWithOptions` (grant may
   need restart). `resolve_path` moved to `icons.rs` (shared). `selected_icon` +
   `list_icons` still stubs. **Untested on hardware — CI compile only.**
-- Remaining Route 1 work after AX hover verified: macOS overlay/panel look, badge
-  equivalent (needs list_icons via Finder AX tree), selected_icon, hotkey/tray/
-  updater verification on Mini, .dmg artifact in CI for sideloading, Gatekeeper docs.
+- AX hover PR #12 merged 2026-07-21 (hardware-untested).
+- **dmg artifact PR** (`wip-ci-dmg`): CI macOS job builds ad-hoc-signed arm64 `.dmg`
+  (`npx @tauri-apps/cli build --bundles dmg`, updater artifacts off — signing key is
+  release-only) and uploads as workflow artifact (14-day retention). `icon.png` added
+  to bundle icons (bundler composes the `.icns`). README: per-platform build prereqs
+  + macOS beta/Gatekeeper note.
+- Remaining Route 1 work after AX hover verified on Mini: macOS overlay/panel look,
+  badge equivalent (needs list_icons via Finder AX tree), selected_icon, hotkey/tray/
+  updater verification, release.yml macOS matrix + Gatekeeper docs at mac launch.
 
 **Route 1 test strategy CONFIRMED (owner, 2026-07-21)**:
 - **CI matrix from day 1**: every PR compiles + unit-tests on Apple-silicon macOS

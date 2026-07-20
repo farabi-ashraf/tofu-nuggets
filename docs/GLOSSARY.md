@@ -66,7 +66,7 @@
 | `app/src-tauri/nsis/hooks.nsh` | Uninstaller message (notes stay on disk) |
 | `app/src-tauri/capabilities/default.json` | Webview permission grants (write-ops need explicit allows) |
 | `.github/workflows/release.yml` | Tag `v*` → build+sign → draft release + `latest.json` |
-| `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests) |
+| `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests). macOS job also uploads an ad-hoc-signed arm64 `.dmg` artifact (14-day retention) for hardware testing |
 | `spikes/` | Historical go/no-go spikes (hover-detect GO; badge-reparent NO-GO) with findings in their READMEs |
 | `%APPDATA%\com.tofunuggets.app\` | settings.json, index.db, tofu.log (per-user runtime data) |
 
