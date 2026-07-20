@@ -28,7 +28,11 @@
 
 ## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1; Route 3 deferred
 
-**Route 2 implemented (2026-07-21)**, PR #8 (`wip-drop-links`): dropping files/folders
+**Route 2 SHIPPED (2026-07-21)**: PR #8 merged, owner tested drag-drop on desktop —
+works. Declared stable → **0.2.0 release in progress** (bump PR `wip-bump-0.2.0`;
+minor bump because drag-drop is a feature). After 0.2.0 ships: begin Route 1.
+
+Implementation record: dropping files/folders
 onto the open editor inserts `nugget://` links — same `insertPathLink` pipeline as the
 📄/📁 picker buttons. Webview-side only (`editor.js` via Tauri `onDragDropEvent` — API
 identical on macOS, no platform code; HTML5 drop never fires because Tauri intercepts).
