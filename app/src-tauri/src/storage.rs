@@ -4,10 +4,14 @@
 //! a folder's own nugget lives inside it at `<folder>\.nuggets\_self.nugget.json`
 //! so it travels when the folder is copied or synced.
 //!
-//! Milestone 1 only reads nuggets (the editor arrives in Milestone 3); test
-//! sidecars can be written by hand or with `write_nugget`.
+//! Unwritable parents (Public Desktop needs elevation — docs/V0.1.1.md A4):
+//! the sidecar is *redirected* into the user's own desktop `.nuggets` as
+//! `<name>.<pathhash>.nugget.json` with the annotated item's absolute path
+//! stored in the `target` field. Reads check the primary location first,
+//! then the redirect.
 
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +26,49 @@ pub struct Nugget {
     pub html: String,
     pub created_ms: u64,
     pub modified_ms: u64,
+    /// Absolute path of the annotated item — present only in redirected
+    /// sidecars, where the filename alone can't identify the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+/// Root whose `.nuggets` dir hosts redirected sidecars (the user's desktop).
+/// Set once at startup; tests point it at a tempdir.
+static REDIRECT_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+pub fn set_redirect_root(root: Option<PathBuf>) {
+    if let Ok(mut r) = REDIRECT_ROOT.write() {
+        *r = root;
+    }
+}
+
+/// Redirected sidecar location for an item whose own parent is unwritable.
+/// The path hash keeps same-named items from different folders apart.
+pub fn redirect_sidecar_path(item: &Path) -> Option<PathBuf> {
+    let root = REDIRECT_ROOT.read().ok()?.clone()?;
+    // Item must not live under the redirect root itself (its sidecars are
+    // primary there) — avoids a same-name collision with a primary sidecar.
+    if item.parent() == Some(root.as_path()) {
+        return None;
+    }
+    let name = item.file_name()?.to_string_lossy();
+    let hash = fnv1a64(item.to_string_lossy().to_lowercase().as_bytes());
+    Some(
+        root.join(SIDECAR_DIR)
+            .join(format!("{name}.{hash:08x}.nugget.json")),
+    )
+}
+
+/// Stable filename hash — std's DefaultHasher is not guaranteed stable
+/// across Rust releases, and these names must never change once written.
+fn fnv1a64(bytes: &[u8]) -> u32 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    // Fold to 32 bits for a short, stable suffix.
+    (h ^ (h >> 32)) as u32
 }
 
 /// Sidecar location for an annotated file or folder.
@@ -35,14 +82,25 @@ pub fn sidecar_path(item: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn read_nugget(item: &Path) -> Option<Nugget> {
-    let sc = sidecar_path(item)?;
+/// Parse a sidecar file directly (index scans need this for redirected
+/// sidecars, whose filename doesn't name their target).
+pub fn read_sidecar_file(sc: &Path) -> Option<Nugget> {
     let data = std::fs::read_to_string(sc).ok()?;
     serde_json::from_str(&data).ok()
 }
 
+pub fn read_nugget(item: &Path) -> Option<Nugget> {
+    if let Some(n) = sidecar_path(item).and_then(|sc| read_sidecar_file(&sc)) {
+        return Some(n);
+    }
+    redirect_sidecar_path(item).and_then(|sc| read_sidecar_file(&sc))
+}
+
 pub fn has_nugget(item: &Path) -> bool {
     sidecar_path(item).map(|p| p.is_file()).unwrap_or(false)
+        || redirect_sidecar_path(item)
+            .map(|p| p.is_file())
+            .unwrap_or(false)
 }
 
 #[allow(dead_code)] // used by the editor from Milestone 3; handy for seeding test data now
@@ -50,31 +108,51 @@ pub fn write_nugget(item: &Path, nugget: &Nugget) -> std::io::Result<()> {
     let sc = sidecar_path(item)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no sidecar path"))?;
     let dir = sc.parent().unwrap();
-    std::fs::create_dir_all(dir)?;
-    hide_dir(dir);
-    std::fs::write(&sc, serde_json::to_string_pretty(nugget)?)
+    let primary = std::fs::create_dir_all(dir).and_then(|()| {
+        hide_dir(dir);
+        std::fs::write(&sc, serde_json::to_string_pretty(nugget)?)
+    });
+    match primary {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            // Unwritable parent (e.g. Public Desktop): redirect the sidecar
+            // under the user's own desktop, remembering the target.
+            let rsc = redirect_sidecar_path(item).ok_or(e)?;
+            let rdir = rsc.parent().unwrap();
+            std::fs::create_dir_all(rdir)?;
+            hide_dir(rdir);
+            let mut n = nugget.clone();
+            n.target = Some(item.to_string_lossy().into_owned());
+            std::fs::write(&rsc, serde_json::to_string_pretty(&n)?)
+        }
+        other => other,
+    }
 }
 
-/// Delete an item's nugget: remove the sidecar and, when that leaves the
-/// `.nuggets` dir empty, the dir itself. Missing sidecar is not an error.
+/// Delete an item's nugget: remove the sidecar (primary and redirect) and,
+/// when that leaves a `.nuggets` dir empty, the dir itself. Missing sidecar
+/// is not an error.
 pub fn delete_nugget(item: &Path) -> std::io::Result<()> {
-    let Some(sc) = sidecar_path(item) else {
-        return Ok(());
-    };
-    match std::fs::remove_file(&sc) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
-    }
-    if let Some(dir) = sc.parent() {
-        if std::fs::read_dir(dir)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(false)
-        {
-            let _ = std::fs::remove_dir(dir);
+    let mut result = Ok(());
+    for sc in [sidecar_path(item), redirect_sidecar_path(item)]
+        .into_iter()
+        .flatten()
+    {
+        match std::fs::remove_file(&sc) {
+            Ok(()) => {
+                if let Some(dir) = sc.parent() {
+                    if std::fs::read_dir(dir)
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false)
+                    {
+                        let _ = std::fs::remove_dir(dir);
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => result = Err(e),
         }
     }
-    Ok(())
+    result
 }
 
 /// An "empty" note (no visible text once tags are stripped) counts as
@@ -108,6 +186,18 @@ pub fn preview_text(html: &str) -> String {
 pub fn rename_sidecar(old_item: &Path, new_item: &Path) -> std::io::Result<()> {
     if new_item.is_dir() {
         return Ok(());
+    }
+    // Redirected sidecar: the filename hash and embedded target both encode
+    // the item path, so rewrite rather than rename.
+    if let Some(old_rsc) = redirect_sidecar_path(old_item).filter(|p| p.is_file()) {
+        if let Some(mut n) = read_sidecar_file(&old_rsc) {
+            n.target = Some(new_item.to_string_lossy().into_owned());
+            if let Some(new_rsc) = redirect_sidecar_path(new_item) {
+                std::fs::write(&new_rsc, serde_json::to_string_pretty(&n)?)?;
+                let _ = std::fs::remove_file(&old_rsc);
+                return Ok(());
+            }
+        }
     }
     let (Some(old_sc), Some(new_sc)) = (sidecar_path_for_file(old_item), sidecar_path(new_item))
     else {
@@ -154,12 +244,17 @@ fn hide_dir(dir: &Path) {
 mod tests {
     use super::*;
 
+    // Redirect tests mutate the process-global REDIRECT_ROOT; serialize them
+    // so parallel runs don't clobber each other's root.
+    static REDIRECT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn nugget(html: &str) -> Nugget {
         Nugget {
             schema: SCHEMA_VERSION,
             html: html.into(),
             created_ms: 1,
             modified_ms: 1,
+            target: None,
         }
     }
 
@@ -260,5 +355,57 @@ mod tests {
         );
         let long = format!("<p>{}</p>", "x".repeat(300));
         assert_eq!(preview_text(&long).chars().count(), 120);
+    }
+
+    #[test]
+    fn redirect_path_shape_and_root_exclusion() {
+        let _guard = REDIRECT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        set_redirect_root(Some(root.clone()));
+
+        // Item under an unwritable elsewhere-dir gets a hashed name in the
+        // redirect root's .nuggets.
+        let item = Path::new("C:/Users/Public/Desktop/Logitech G HUB.lnk");
+        let rsc = redirect_sidecar_path(item).unwrap();
+        assert_eq!(rsc.parent().unwrap(), root.join(SIDECAR_DIR));
+        let fname = rsc.file_name().unwrap().to_string_lossy();
+        assert!(fname.starts_with("Logitech G HUB.lnk."));
+        assert!(fname.ends_with(".nugget.json"));
+
+        // An item that already lives directly under the redirect root has a
+        // normal primary sidecar there — no redirect (would collide).
+        let native = root.join("thing.txt");
+        assert!(redirect_sidecar_path(&native).is_none());
+
+        set_redirect_root(None);
+    }
+
+    #[test]
+    fn redirect_roundtrip_read_has_delete() {
+        let _guard = REDIRECT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        set_redirect_root(Some(root.clone()));
+
+        // Simulate a redirected save: the item's real parent is unwritable,
+        // so the sidecar lands under the redirect root with `target` set.
+        let item = Path::new("C:/Users/Public/Desktop/Logitech G HUB.lnk");
+        let rsc = redirect_sidecar_path(item).unwrap();
+        std::fs::create_dir_all(rsc.parent().unwrap()).unwrap();
+        let mut n = nugget("<p>gaming</p>");
+        n.target = Some(item.to_string_lossy().into_owned());
+        std::fs::write(&rsc, serde_json::to_string_pretty(&n).unwrap()).unwrap();
+
+        // Reads resolve via the redirect, keyed by item path.
+        assert!(has_nugget(item));
+        assert_eq!(read_nugget(item).unwrap().html, "<p>gaming</p>");
+
+        // Delete clears the redirected sidecar too.
+        delete_nugget(item).unwrap();
+        assert!(!has_nugget(item));
+        assert!(!rsc.is_file());
+
+        set_redirect_root(None);
     }
 }

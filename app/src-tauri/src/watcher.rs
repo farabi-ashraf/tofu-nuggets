@@ -97,12 +97,17 @@ fn is_sidecar_path(p: &Path) -> bool {
 /// Map a sidecar file path back to the item it annotates.
 /// `<dir>/.nuggets/_self.nugget.json` -> `<dir>` ;
 /// `<parent>/.nuggets/<name>.nugget.json` -> `<parent>/<name>`.
+/// A redirected sidecar (unwritable parent) names an item elsewhere; its
+/// `target` field is authoritative, so prefer that when the file is readable.
 fn sidecar_to_item(p: &Path) -> Option<PathBuf> {
     let fname = p.file_name()?.to_string_lossy();
     let item_name = fname.strip_suffix(".nugget.json")?.to_string();
     let sc_dir = p.parent()?;
     if sc_dir.file_name()? != storage::SIDECAR_DIR {
         return None;
+    }
+    if let Some(t) = storage::read_sidecar_file(p).and_then(|n| n.target) {
+        return Some(PathBuf::from(t));
     }
     let owner = sc_dir.parent()?;
     if item_name == "_self" {
@@ -127,6 +132,7 @@ mod tests {
             html: html.into(),
             created_ms: 1,
             modified_ms: 1,
+            target: None,
         }
     }
 

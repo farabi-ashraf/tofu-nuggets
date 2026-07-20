@@ -57,6 +57,9 @@ pub fn save_nugget(
         html,
         created_ms,
         modified_ms: now,
+        // write_nugget stamps this itself when it redirects; irrelevant to a
+        // primary sidecar (the path names the target).
+        target: None,
     };
     storage::write_nugget(&item, &nugget).map_err(|e| e.to_string())?;
     if let Ok(idx) = index.lock() {

@@ -124,7 +124,10 @@ fn upsert_tx(conn: &Connection, item: &Path, nugget: &storage::Nugget) -> rusqli
 fn scan_root(root: &Path) -> Vec<(PathBuf, storage::Nugget)> {
     let mut out = Vec::new();
 
-    // File nuggets: root/.nuggets/<filename>.nugget.json -> root/<filename>
+    // File nuggets: root/.nuggets/<filename>.nugget.json -> root/<filename>.
+    // Redirected sidecars (unwritable parents, e.g. Public Desktop) carry a
+    // `target` field and a `<name>.<hash>.nugget.json` filename; they point
+    // at an item outside this root, so trust the embedded target instead.
     let sc_dir = root.join(storage::SIDECAR_DIR);
     if let Ok(entries) = std::fs::read_dir(&sc_dir) {
         for e in entries.flatten() {
@@ -138,13 +141,17 @@ fn scan_root(root: &Path) -> Vec<(PathBuf, storage::Nugget)> {
             if item_name == "_self" {
                 continue;
             }
-            let item = root.join(item_name);
+            let Some(n) = storage::read_sidecar_file(&sc) else {
+                continue;
+            };
+            let item = match &n.target {
+                Some(t) => PathBuf::from(t),
+                None => root.join(item_name),
+            };
             if !item.exists() {
                 continue; // stale sidecar; keep file, skip index
             }
-            if let Some(n) = storage::read_nugget(&item) {
-                out.push((item, n));
-            }
+            out.push((item, n));
         }
     }
 
@@ -180,6 +187,7 @@ mod tests {
             html: html.into(),
             created_ms: t,
             modified_ms: t,
+            target: None,
         }
     }
 
@@ -211,6 +219,44 @@ mod tests {
         assert_eq!(all[0].preview, "client work");
         assert_eq!(all[1].name, "report.pdf");
         assert_eq!(all[1].preview, "quarterly report");
+    }
+
+    #[test]
+    fn rebuild_resolves_redirected_sidecar_via_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        // A real item elsewhere on disk (stand-in for Public Desktop).
+        let elsewhere = tmp.path().join("public");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let item = elsewhere.join("Logitech G HUB.lnk");
+        std::fs::write(&item, b"x").unwrap();
+
+        // A redirected sidecar under the scanned root, hashed filename, with
+        // the real target embedded.
+        let sc_dir = root.join(storage::SIDECAR_DIR);
+        std::fs::create_dir_all(&sc_dir).unwrap();
+        let n = storage::Nugget {
+            schema: 1,
+            html: "<p>gaming</p>".into(),
+            created_ms: 5,
+            modified_ms: 5,
+            target: Some(item.to_string_lossy().into_owned()),
+        };
+        std::fs::write(
+            sc_dir.join("Logitech G HUB.lnk.deadbeef.nugget.json"),
+            serde_json::to_string_pretty(&n).unwrap(),
+        )
+        .unwrap();
+
+        let mut idx = NuggetIndex::open_in_memory().unwrap();
+        idx.rebuild(std::slice::from_ref(&root)).unwrap();
+
+        let all = idx.all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "Logitech G HUB.lnk");
+        assert_eq!(all[0].preview, "gaming");
+        assert!(all[0].path.ends_with("Logitech G HUB.lnk"));
     }
 
     #[test]
