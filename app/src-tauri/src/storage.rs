@@ -155,6 +155,31 @@ pub fn delete_nugget(item: &Path) -> std::io::Result<()> {
     result
 }
 
+/// Remove every `*.nugget.json` from a `.nuggets` directory, then the dir
+/// itself if that leaves it empty. Used by the danger-zone "delete all notes"
+/// to sweep strays (stale sidecars for items that no longer exist never enter
+/// the index). Missing dir is a no-op.
+pub fn purge_sidecar_dir(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.file_name()
+            .map(|f| f.to_string_lossy().ends_with(".nugget.json"))
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+    if std::fs::read_dir(dir)
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_dir(dir);
+    }
+}
+
 /// An "empty" note (no visible text once tags are stripped) counts as
 /// deleted: saving one removes the nugget instead of storing markup husks.
 pub fn is_empty_html(html: &str) -> bool {
@@ -334,6 +359,37 @@ mod tests {
         assert!(!has_nugget(&a));
         assert!(has_nugget(&b));
         assert!(tmp.path().join(SIDECAR_DIR).exists());
+    }
+
+    #[test]
+    fn purge_sidecar_dir_removes_nuggets_and_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("doc.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_nugget(&file, &nugget("<p>hi</p>")).unwrap();
+        let sc_dir = tmp.path().join(SIDECAR_DIR);
+        assert!(sc_dir.exists());
+
+        purge_sidecar_dir(&sc_dir);
+        // Sole sidecar removed -> dir gone.
+        assert!(!sc_dir.exists());
+        // Missing dir is a no-op.
+        purge_sidecar_dir(&sc_dir);
+    }
+
+    #[test]
+    fn purge_sidecar_dir_keeps_dir_with_foreign_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sc_dir = tmp.path().join(SIDECAR_DIR);
+        std::fs::create_dir_all(&sc_dir).unwrap();
+        std::fs::write(sc_dir.join("a.nugget.json"), b"{}").unwrap();
+        // A non-nugget file must survive, so the dir stays.
+        std::fs::write(sc_dir.join("keep.txt"), b"x").unwrap();
+
+        purge_sidecar_dir(&sc_dir);
+        assert!(!sc_dir.join("a.nugget.json").exists());
+        assert!(sc_dir.join("keep.txt").exists());
+        assert!(sc_dir.exists());
     }
 
     #[test]

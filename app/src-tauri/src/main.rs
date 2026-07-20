@@ -83,6 +83,7 @@ fn main() {
             mainwin::list_nuggets,
             mainwin::edit_nugget,
             mainwin::open_main,
+            mainwin::delete_all_nuggets,
             overlay::hide_overlay,
             settings::get_settings,
             settings::set_settings

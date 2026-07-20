@@ -89,6 +89,13 @@ impl NuggetIndex {
         );
     }
 
+    /// Empty the index (danger-zone "delete all notes"). Sidecars are removed
+    /// separately; this just clears the rebuildable cache.
+    pub fn clear(&self) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM nuggets", [])?;
+        Ok(())
+    }
+
     pub fn all(&self) -> rusqlite::Result<Vec<Entry>> {
         let mut stmt = self.conn.prepare(
             "SELECT path, name, preview, modified_ms FROM nuggets ORDER BY modified_ms DESC",
@@ -257,6 +264,22 @@ mod tests {
         assert_eq!(all[0].name, "Logitech G HUB.lnk");
         assert_eq!(all[0].preview, "gaming");
         assert!(all[0].path.ends_with("Logitech G HUB.lnk"));
+    }
+
+    #[test]
+    fn clear_empties_the_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let file = root.join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_nugget(&file, &nugget("<p>note</p>", 10)).unwrap();
+
+        let mut idx = NuggetIndex::open_in_memory().unwrap();
+        idx.rebuild(std::slice::from_ref(&root)).unwrap();
+        assert_eq!(idx.all().unwrap().len(), 1);
+
+        idx.clear().unwrap();
+        assert!(idx.all().unwrap().is_empty());
     }
 
     #[test]

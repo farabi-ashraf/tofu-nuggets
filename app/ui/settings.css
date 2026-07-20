@@ -11,6 +11,7 @@
   --fg: rgba(245, 245, 250, 0.95);
   --fg-dim: rgba(245, 245, 250, 0.5);
   --accent: #f58f3c;
+  --danger: #e5484d;
   --border: rgba(255, 255, 255, 0.12);
   --font-scale: 1;
 }
@@ -31,6 +32,7 @@
   --fg: #fff;
   --fg-dim: #fff;
   --accent: #ffb000;
+  --danger: #ff6b6b;
   --border: #fff;
 }
 
@@ -41,6 +43,7 @@
   --fg: #000;
   --fg-dim: #000;
   --accent: #a15c00;
+  --danger: #b3261e;
   --border: #000;
 }
 
@@ -191,6 +194,39 @@ input[type="range"] {
   font-size: calc(11px * var(--font-scale));
   color: var(--fg-dim);
   margin-top: 4px;
+}
+
+.danger {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.danger-btn {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--danger, #e5484d);
+  background: transparent;
+  color: var(--danger, #e5484d);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 600;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.danger-btn:hover {
+  background: rgba(229, 72, 77, 0.14);
+}
+
+.danger-btn.armed {
+  background: var(--danger, #e5484d);
+  color: #fff;
+  border-color: var(--danger, #e5484d);
+}
+
+.danger-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 ::-webkit-scrollbar {

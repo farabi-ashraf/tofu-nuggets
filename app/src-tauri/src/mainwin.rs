@@ -2,10 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::editor;
 use crate::index::{Entry, NuggetIndex};
+use crate::{desktop, editor, storage};
 
 pub const LABEL: &str = "main";
 
@@ -16,6 +16,61 @@ pub fn list_nuggets(index: tauri::State<Arc<Mutex<NuggetIndex>>>) -> Result<Vec<
         .map_err(|e| e.to_string())?
         .all()
         .map_err(|e| e.to_string())
+}
+
+/// Danger-zone "Delete all notes": remove every sidecar — indexed notes (by
+/// item path, which also clears redirected sidecars and empty `.nuggets` dirs)
+/// plus any strays left in the desktop roots — then clear the index. Sidecars
+/// are the source of truth, so this is destructive and irreversible; the UI
+/// two-step-confirms before calling. Returns the count of indexed notes removed.
+#[tauri::command]
+pub fn delete_all_nuggets(
+    app: AppHandle,
+    index: tauri::State<Arc<Mutex<NuggetIndex>>>,
+) -> Result<usize, String> {
+    // 1. Delete every indexed note by its item path.
+    let entries = index
+        .lock()
+        .map_err(|e| e.to_string())?
+        .all()
+        .map_err(|e| e.to_string())?;
+    let mut removed = 0usize;
+    for e in &entries {
+        if storage::delete_nugget(std::path::Path::new(&e.path)).is_ok() {
+            removed += 1;
+        }
+    }
+
+    // 2. Sweep strays: leftover sidecars in each desktop root's `.nuggets`
+    //    (including redirected ones) and in its direct child folders' `.nuggets`.
+    for root in desktop::desktop_dirs() {
+        storage::purge_sidecar_dir(&root.join(storage::SIDECAR_DIR));
+        if let Ok(rd) = std::fs::read_dir(&root) {
+            for e in rd.flatten() {
+                let d = e.path();
+                if d.is_dir()
+                    && d.file_name()
+                        .map(|f| f != storage::SIDECAR_DIR)
+                        .unwrap_or(false)
+                {
+                    storage::purge_sidecar_dir(&d.join(storage::SIDECAR_DIR));
+                }
+            }
+        }
+    }
+
+    // 3. Clear the (now-stale) index and refresh open views.
+    index
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear()
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("nuggets:changed", ());
+    crate::logfile::log(
+        &app,
+        &format!("delete all notes: removed {removed} note(s)"),
+    );
+    Ok(removed)
 }
 
 /// Open the editor for a path chosen in the list. Window creation must run on
