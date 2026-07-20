@@ -30,9 +30,9 @@
 |---|---|---|
 | `main.rs` | App wiring: plugins, managed state, command registry, startup (WebView2 guard, index rebuild, watcher, hotkey, hover, badges, tray) | `main`, `webview_missing_alert` |
 | `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
-| `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …) | `DesktopIcons`, `new_icons` |
+| `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …) | `DesktopIcons`, `new_icons`, `resolve_path` |
 | `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection, display-name→path resolution, desktop roots, infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
-| `desktop_mac.rs` | **macOS** `DesktopIcons` stub (hover/badges inert); real `~/Desktop` root so storage/editor/list work. AX-API impl replaces it (Route 1) | `MacIcons` |
+| `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX-API hit-test hover (hand-declared FFI, points↔pixels conversion, Accessibility-permission prompt). `selected_icon`/`list_icons` still stubs (badges Windows-only) | `MacIcons` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
 | `badges.rs` | Badge layer: dot painting, per-dot occlusion, WinEvent-driven refresh. Windows-only (no-op stub on macOS, see main.rs) | `spawn` |
 | `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir` |

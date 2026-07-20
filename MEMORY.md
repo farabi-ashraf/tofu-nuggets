@@ -42,9 +42,17 @@
   windows-latest + macos-latest. **macOS compile status verified by this CI**, not
   locally.
 - README rewritten (owner request): v0.2.0, per-function usage guide, macOS-port note.
-- Remaining Route 1 work: AX-API hover impl, macOS overlay/panel look, badge
-  equivalent, hotkey/tray/updater verification on Mini, .dmg artifact in CI for
-  sideloading, Gatekeeper docs.
+- Scaffold PR #11 merged 2026-07-21.
+- **AX hover PR** (`wip-mac-ax-hover`): `desktop_mac.rs` real `icon_at` via
+  system-wide `AXUIElementCopyElementAtPosition`; desktop-icon test = AXImage in
+  AXScrollArea whose window is display-sized (heuristic — verify vs Finder icon-view
+  windows on Mini); hand-declared FFI (no bindings crates); points↔px via per-display
+  backing scale; Accessibility prompt via `AXIsProcessTrustedWithOptions` (grant may
+  need restart). `resolve_path` moved to `icons.rs` (shared). `selected_icon` +
+  `list_icons` still stubs. **Untested on hardware — CI compile only.**
+- Remaining Route 1 work after AX hover verified: macOS overlay/panel look, badge
+  equivalent (needs list_icons via Finder AX tree), selected_icon, hotkey/tray/
+  updater verification on Mini, .dmg artifact in CI for sideloading, Gatekeeper docs.
 
 **Route 1 test strategy CONFIRMED (owner, 2026-07-21)**:
 - **CI matrix from day 1**: every PR compiles + unit-tests on Apple-silicon macOS

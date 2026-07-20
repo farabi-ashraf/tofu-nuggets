@@ -42,6 +42,34 @@ pub trait DesktopIcons {
     fn selected_icon(&self) -> Option<Icon>;
 }
 
+/// Resolve an icon's display name to a filesystem path against the desktop
+/// roots. The file manager may hide extensions (Explorer always for known
+/// types, Finder per-file), so match against both the full file name and the
+/// stem.
+pub fn resolve_path(display_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    let target = display_name.to_lowercase();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let Some(full) = p.file_name().map(|f| f.to_string_lossy().to_lowercase()) else {
+                continue;
+            };
+            if full == target {
+                return Some(p);
+            }
+            if let Some(stem) = p.file_stem() {
+                if stem.to_string_lossy().to_lowercase() == target {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(windows)]
 pub use crate::desktop::{
     cursor_pos, desktop_dirs, init_thread, new_icons, suppress_desktop_infotips,
