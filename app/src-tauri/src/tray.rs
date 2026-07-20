@@ -20,6 +20,7 @@ const OPEN: &str = "open";
 const PAUSE: &str = "pause";
 const SETTINGS: &str = "settings";
 const AUTOSTART: &str = "autostart";
+const UPDATES: &str = "updates";
 const QUIT: &str = "quit";
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
@@ -35,13 +36,16 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         autostart_on,
         None::<&str>,
     )?;
+    let updates = MenuItem::with_id(app, UPDATES, "Check for updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT, "Quit", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
 
     let menu = Menu::with_items(
         app,
-        &[&open, &sep1, &pause, &settings, &autostart, &sep2, &quit],
+        &[
+            &open, &sep1, &pause, &settings, &autostart, &updates, &sep2, &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("tofu-tray")
@@ -66,6 +70,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 let mgr = app.autolaunch();
                 let now_on = mgr.is_enabled().unwrap_or(false);
                 let _ = if now_on { mgr.disable() } else { mgr.enable() };
+            }
+            UPDATES => {
+                logfile::log(app, "tray: check for updates clicked");
+                crate::updater::check(app, true);
             }
             QUIT => app.exit(0),
             _ => {}

@@ -14,6 +14,7 @@ mod overlay;
 mod settings;
 mod storage;
 mod tray;
+mod updater;
 mod watcher;
 
 use std::sync::{Arc, Mutex};
@@ -64,6 +65,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
