@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::index::{Entry, NuggetIndex};
-use crate::{desktop, editor, storage};
+use crate::{editor, icons, storage};
 
 pub const LABEL: &str = "main";
 
@@ -43,7 +43,7 @@ pub fn delete_all_nuggets(
 
     // 2. Sweep strays: leftover sidecars in each desktop root's `.nuggets`
     //    (including redirected ones) and in its direct child folders' `.nuggets`.
-    for root in desktop::desktop_dirs() {
+    for root in icons::desktop_dirs() {
         storage::purge_sidecar_dir(&root.join(storage::SIDECAR_DIR));
         if let Ok(rd) = std::fs::read_dir(&root) {
             for e in rd.flatten() {
