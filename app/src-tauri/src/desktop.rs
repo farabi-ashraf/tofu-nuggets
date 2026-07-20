@@ -221,31 +221,7 @@ pub fn desktop_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Explorer may hide extensions, so match the display name against both the
-/// full file name and the stem.
-pub fn resolve_path(display_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
-    let target = display_name.to_lowercase();
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            let Some(full) = p.file_name().map(|f| f.to_string_lossy().to_lowercase()) else {
-                continue;
-            };
-            if full == target {
-                return Some(p);
-            }
-            if let Some(stem) = p.file_stem() {
-                if stem.to_string_lossy().to_lowercase() == target {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
+use crate::icons::resolve_path;
 
 pub fn init_com_for_thread() {
     unsafe {
