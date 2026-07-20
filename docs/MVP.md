@@ -1,110 +1,48 @@
-# MVP Scope & Milestones
+# MVP Scope & Milestone Record
 
-## In scope (MVP)
+> MVP (0.1.0) completed 2026-07-18; hardened + shipped as the 0.1.x line
+> (`docs/V0.1.3.md`). This file records what was in/out of scope and that every
+> milestone passed its verification gate. Per-milestone verification detail lives in
+> git history and MEMORY.md lessons.
+
+## MVP scope (all shipped)
 
 - Windows 10/11, desktop icons only.
-- Hover over annotated desktop icon → glassy panel shows the nugget.
-- Badge layer: small visual cue on tagged icons (toggleable) so tagged items are scannable at a glance.
-- Global hotkey on selected desktop icon → rich text editor (bold/italic, bullets, checkable todos, clickable URLs).
-- File-to-file links: link another file/folder inside a note; clicking opens Explorer at target.
-- Sidecar storage (`.nuggets` hidden folders), SQLite cache index.
-- Main window: list of all annotated items, with per-row Open / Edit / Delete
-  (two-step confirm). Saving an emptied note also removes it (sidecar deleted,
-  badge + hover state go with it).
-- Accessibility: overlay font size (S/M/L/XL), panel scale, dark/light/system theme, Reduced Motion + High Contrast respect (see ARCHITECTURE.md).
-- Tray icon: open, pause, settings (hotkey, autostart, accessibility, badges), quit.
-- Performance budget per ARCHITECTURE.md: ~0% CPU idle, core RAM ~15–20 MB, icon count must not affect hover cost.
+- Hover over annotated icon → glassy panel shows the nugget; badge dots mark tagged icons.
+- Global hotkey → TipTap editor (bold/italic, bullets, checkable todos, links).
+- File-to-file `nugget://` links; click opens Explorer at target.
+- Sidecar storage (`.nuggets` hidden folders) + rebuildable SQLite index.
+- Main window: all nuggets, filter, per-row Open/Edit/Delete (two-step confirm);
+  saving an emptied note removes it.
+- Accessibility: font size S–XL, panel scale, dark/light/system theme, Reduced
+  Motion + High Contrast respect.
+- Tray: open, pause, settings (hotkey rebind, autostart, accessibility, badges), quit.
+- Performance budget (hard): ~0% CPU idle, core RAM ~15–20 MB, icon count must not
+  affect hover cost. Measured on release build: idle 0.00% CPU, 6.3 MB private,
+  WebView2 6→0 procs after idle release.
 
-## Out of scope (MVP) — explicit
+## Explicitly deferred (revisit only as owner decision)
 
-- File Explorer window integration (post-MVP, likely Pro tier)
-- Right-click shell context menu (needs shell extension — post-MVP)
-- Sync, accounts, teams
-- macOS/Linux
-- Search, tags, link-graph view
-- Monetization (free MVP per FEASIBILITY.md)
+- File Explorer window integration (Route 3 discussion pending — see MEMORY.md)
+- Right-click shell context menu (needs shell extension)
+- Sync, accounts, teams; search, tags, link-graph view
+- macOS/Linux (macOS port is a candidate next step)
+- Monetization (free while in beta; freemium later per owner's market research)
 
-## Milestones
+## Milestone record (all ✅, each passed its verification gate)
 
-```
-0. Spike: hover detection ✅ GO      → verified 2026-07-17 on Win 11: simtest 51/51 icons
-   (UIA ElementFromPoint on desktop)    detected + paths resolved (spikes/hover-detect).
-                                        Still pending: Win 10, multi-monitor, DPI ≠ 100%.
-1. Overlay panel + badge layer ✅    → verified 2026-07-17 on Win 11: panel shows on hover over
-                                        annotated icon (translucent glass, correct position/DPI),
-                                        hides on leave; badges render on tagged icons only,
-                                        click-through by construction (WS_EX_TRANSPARENT).
-                                        Deferred: right-edge flip test, native infotip
-                                        suppression, WebView2 idle-release (see ARCHITECTURE
-                                        perf notes — measured 379 MB warm, release mandatory).
-2. Sidecar storage + index ✅        → verified 2026-07-17: 10 unit tests pass (write/read
-                                        roundtrip, rename moves sidecar, cross-dir move, index
-                                        rebuild skips stale sidecars, watcher event handling).
-                                        Bonus: WebView2 idle-release shipped + live-verified
-                                        (6 procs → 0 after idle, recreate on hover ~1 s).
-3. Editor (TipTap) + hotkey ✅       → verified 2026-07-17 E2E: Ctrl+Shift+N over icon opens
-                                        editor with existing note; typed text saved to sidecar
-                                        (created_ms preserved); hover panel shows the edit.
-                                        Deferred to M4/M6: todo-check persistence from the
-                                        hover panel, URL open-in-browser interception.
-4. File links ✅                     → verified 2026-07-17 E2E: editor 📄/📁 picker inserts
-                                        nugget:// link; clicking it in the panel opened a new
-                                        Explorer window at the target (Cabinet count 1→2).
-                                        Bonus this milestone: native desktop infotips
-                                        suppressed (panel is now the sole hover surface),
-                                        todo checkbox toggles persist to the sidecar.
-5. Main window + tray + autostart ✅ → verified 2026-07-17: main window lists all nuggets
-                                        (name/path/preview/time, filter, Open+Edit); Edit
-                                        opens the editor (window enumeration + trace confirmed);
-                                        app runs as background (no window at startup), tray
-                                        registered. Pause flag wired into hover+badges; tray
-                                        toggles pause/autostart/quit. Autostart-survives-reboot
-                                        not yet verified on this machine.
-6. Settings + accessibility ✅       → verified 2026-07-18: settings.json store (serde-default
-                                        backfill, panel_scale clamp) — 5 unit tests (15 total).
-                                        theme.js applies font-scale/panel-scale/theme/motion/
-                                        contrast to <html> live. Verified against the real CSS
-                                        (dev-server webview): font XL×panel 1.5 → 14→30.45px;
-                                        light theme; High Contrast → solid --panel-bg #000 +
-                                        white border; Reduced Motion → animation-name none.
-                                        Settings window renders; app boots clean as background
-                                        with the new state wiring + badge toggle. Tray gained
-                                        "Settings…". Deferred: title-bar theme sync (cosmetic),
-                                        live tray-click + badge-off not machine-clicked.
-7. Polish + installer (NSIS) ✅*     → re-done 2026-07-18 with nugget deletion: empty save
-                                        removes the sidecar (verified live: editor shows
-                                        "note removed", sidecar + empty .nuggets dir gone,
-                                        badge/hover die on next refresh); main-window Delete
-                                        button with two-step "Sure?" confirm (arm state,
-                                        3 s disarm, delete_nugget drops sidecar + index and
-                                        emits nuggets:changed — all machine-verified).
-                                        Original M7 verification (this machine, not fresh VM):
-                                        NSIS per-user installer built (2.9 MB, exe 11.5 MB,
-                                        multi-size icon); silent install → app runs →
-                                        silent uninstall leaves no dir/registry/shortcut
-                                        traces, sidecars untouched. Budget (release build):
-                                        idle CPU 0.00%, core private RAM 6.3 MB (working
-                                        set 30 MB incl. shared DLLs), WebView2 6 procs →
-                                        0 after idle release. Polish: right-edge flip now
-                                        unit-tested (5 tests, incl. DPI×zoom), clippy
-                                        code-lints zero. *Fresh-VM install/uninstall and
-                                        Win 10 / multi-monitor / DPI≠100% still pending —
-                                        needs hardware this machine doesn't have.
-```
+| # | Milestone | Gate that passed |
+|---|---|---|
+| 0 | Hover-detection spike | 51/51 desktop icons detected + paths resolved (`spikes/hover-detect`) — was the go/no-go for the whole approach |
+| 1 | Overlay panel + badge layer | Panel shows/hides on hover with real transparency; dots on tagged icons only, click-through |
+| 2 | Sidecar storage + index + watcher | Unit tests: roundtrip, rename follows, stale-skip; WebView2 idle-release live-verified |
+| 3 | Editor + global hotkey | E2E: hotkey over icon → editor → save → panel shows edit |
+| 4 | File links + infotip suppression | Link click opened Explorer at target; native infotips suppressed; todo toggles persist |
+| 5 | Main window + tray + autostart | List/filter/Edit verified; background app; pause wired |
+| 6 | Settings + accessibility | Live apply verified against real CSS (font/panel scale, themes, HC, RM) |
+| 7 | Installer + deletion + polish | NSIS per-user install/uninstall cycle clean; budget measured; deletion E2E |
 
-Milestone 0 is a go/no-go gate: if desktop hover detection proves unreliable, fall back to the Explorer infotip shell-extension approach before building anything else.
-
-## Post-MVP hardening (2026-07-18, after first external install on Win 10)
-
-- Web links normalized on insert (`example.com` → `https://example.com`); overlay/editor
-  open legacy scheme-less links as https instead of showing "no target".
-- Hotkey customizer in Settings (capture field, Ctrl/Alt/Win + key). Registration failure
-  (combination taken by another app) is logged and non-fatal; rebinding re-registers live
-  and rolls back on failure. Verified E2E: rebind → new combo fires, old dead.
-- Single-instance guard: second launch opens the main window of the running instance
-  (duplicate instances + self-clashing hotkey observed before the fix).
-- Tray Open/Settings handlers create windows from a worker thread (build() deadlock rule).
-- Debug log at `%APPDATA%\com.tofunuggets.app\tofu.log` for remote failure reports.
-
-Win 10 field issue resolved: missing WebView2 Runtime (tester installed the Evergreen
-Standalone Installer manually). Next version's work order: **`docs/V0.1.1.md`**.
+Post-MVP hardening (first external Win 10 install): web-link normalization, hotkey
+customizer with non-fatal registration, single-instance guard, worker-thread window
+creation, `tofu.log` diagnostics. Root cause of the field failure: missing WebView2
+Runtime → fixed for good in 0.1.1 A1.

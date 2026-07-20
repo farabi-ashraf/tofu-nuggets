@@ -12,7 +12,9 @@ the desktop is the foreground window.
 
 ## Status
 
-**v0.1.0 — early, Windows-only, work in progress.** Private preview while core fixes land.
+**v0.1.3 — beta, Windows-only.** Installers are published on the
+[Releases page](https://github.com/farabi-ashraf/tofu-nuggets/releases); installed
+copies self-update via the tray's "Check for updates…".
 
 ## Features
 
