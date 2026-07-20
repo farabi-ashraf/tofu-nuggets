@@ -8,8 +8,39 @@ const { listen } = window.__TAURI__.event;
 const listEl = document.getElementById("list");
 const emptyEl = document.getElementById("empty");
 const filterEl = document.getElementById("filter");
+const hotkeyKeysEl = document.getElementById("hotkey-keys");
 
 let entries = [];
+
+// Render the current global hotkey as <kbd> chips in the empty-state hint, so
+// it tracks the user's chosen combination instead of the old hardcoded default.
+const KEY_LABEL = {
+  ctrl: "Ctrl",
+  control: "Ctrl",
+  shift: "Shift",
+  alt: "Alt",
+  super: "Win",
+  meta: "Win",
+  space: "Space",
+};
+
+function renderHotkey(combo) {
+  if (!hotkeyKeysEl) return;
+  const parts = (combo || "ctrl+shift+n")
+    .split("+")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const nodes = [];
+  parts.forEach((p, i) => {
+    if (i) nodes.push("+");
+    const kbd = document.createElement("kbd");
+    const low = p.toLowerCase();
+    kbd.textContent =
+      KEY_LABEL[low] || (low.length === 1 ? low.toUpperCase() : p[0].toUpperCase() + p.slice(1));
+    nodes.push(kbd);
+  });
+  hotkeyKeysEl.replaceChildren(...nodes);
+}
 
 function when(ms) {
   if (!ms) return "";
@@ -96,3 +127,10 @@ async function reload() {
 filterEl.addEventListener("input", render);
 listen("nuggets:changed", reload);
 reload();
+
+// Seed the hotkey hint immediately, then sync from settings and keep it live.
+renderHotkey();
+invoke("get_settings")
+  .then((s) => renderHotkey(s.hotkey))
+  .catch(() => {});
+listen("settings:changed", (e) => renderHotkey(e.payload && e.payload.hotkey));
