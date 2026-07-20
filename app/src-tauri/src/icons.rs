@@ -34,7 +34,9 @@ pub trait DesktopIcons {
     /// Icon under the given screen point (physical px), if that point is a
     /// desktop icon.
     fn icon_at(&self, x: i32, y: i32) -> Option<Icon>;
-    /// All desktop icons (used by the badge layer).
+    /// All desktop icons. Only the (Windows-only) badge layer calls this
+    /// today; the macOS badge equivalent will too.
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn list_icons(&self) -> Result<Vec<Icon>, String>;
     /// Currently selected desktop icon, if any (hotkey fallback target).
     fn selected_icon(&self) -> Option<Icon>;
