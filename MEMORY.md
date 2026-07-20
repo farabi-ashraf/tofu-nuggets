@@ -26,18 +26,28 @@
 - **Pending verification (hardware-bound)**: fresh-VM install, Win 10, multi-monitor,
   DPI≠100%, autostart-after-reboot. Cosmetic: title-bar theme sync.
 
-## Next step — roadmap CONFIRMED (2026-07-21): Route 2 → stable → Route 1; Route 3 deferred
+## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1; Route 3 deferred
 
-**Route 2 implemented (2026-07-21)** on branch `wip-drop-links` (PR pending owner
-verify+merge): dropping files/folders onto the open editor inserts `nugget://` links —
-same `insertPathLink` pipeline as the 📄/📁 picker buttons. Webview-side only
-(`editor.js` via Tauri `onDragDropEvent` — API identical on macOS, no platform code;
-HTML5 drop never fires because Tauri intercepts). Accent-ring drop cue in `editor.css`.
-No new commands/events/permissions; no Rust change. After owner confirms stable →
-declare stable version → begin Route 1 (macOS 14–26, Apple silicon; NO Apple Developer
-account yet — ad-hoc-signed GitHub Releases + documented Gatekeeper "Open Anyway";
-notarization deferred to public macOS launch; B2: extract `DesktopIcons` trait at port
-start, never per-platform branches).
+**Route 2 implemented (2026-07-21)**, PR #8 (`wip-drop-links`): dropping files/folders
+onto the open editor inserts `nugget://` links — same `insertPathLink` pipeline as the
+📄/📁 picker buttons. Webview-side only (`editor.js` via Tauri `onDragDropEvent` — API
+identical on macOS, no platform code; HTML5 drop never fires because Tauri intercepts).
+Accent-ring drop cue in `editor.css`. No new commands/events/permissions; no Rust
+change. After owner confirms stable → declare stable version → begin Route 1
+(macOS 14–26, Apple silicon; B2: extract `DesktopIcons` trait at port start, never
+per-platform branches).
+
+**macOS distribution decision**: owner will NOT pay for an Apple Developer account yet.
+Beta distribution = unsigned GitHub Releases downloads: Tauri applies free ad-hoc
+signing automatically (mandatory on Apple silicon), but no notarization → Gatekeeper
+blocks first launch; testers need the documented bypass (System Settings → Privacy &
+Security → "Open Anyway"; on macOS 15+ the old right-click→Open bypass is gone).
+Acceptable for invited beta testers with instructions in the README/release notes.
+Revisit the $99/yr account (real signing + notarization) before any public macOS launch.
+The in-app updater's own signature (minisign keypair) is independent of Apple signing
+and keeps working.
+
+Original route analysis (for context):
 
 1. **Route 1 — macOS port** (mac 14–26, Apple-silicon testers waiting): heaviest.
    `DesktopIcons` trait extraction per B2, AX-API hover, Finder specifics, overlay/badge
