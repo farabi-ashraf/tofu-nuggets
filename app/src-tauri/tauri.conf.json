@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tofu Nuggets",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.tofunuggets.app",
   "build": {
     "beforeBuildCommand": "npm --prefix ../ui run build",
@@ -14,8 +14,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/farabi-ashraf/tofu-nuggets/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhENzAyREMxRUEyMTVEN0QKUldSOVhTSHF3UzF3aldzVTN2WW1oQjRqVGpPb21OYWxUKy9TcTJsQXVlWHJLR2dhOWpkbjhTcisK"
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "publisher": "Tofu Nuggets",

@@ -1,0 +1,62 @@
+name: release
+
+# Build, sign, and publish a GitHub Release when a version tag is pushed.
+# Ship a new version with:  bump version in tauri.conf.json + Cargo.toml,
+# then  `git tag v0.1.1 && git push origin v0.1.1`.
+# tauri-action generates the signed installer, its .sig, and latest.json
+# (createUpdaterArtifacts is set in tauri.conf.json) and attaches them to the
+# release, which the in-app updater reads from
+# releases/latest/download/latest.json.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least-privilege by default at the repo level; this workflow needs write only
+# to create the release.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: app/ui
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Build, sign, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Folder that CONTAINS src-tauri; tauri-action finds
+          # app/src-tauri/tauri.conf.json and runs its beforeBuildCommand
+          # (npm --prefix ../ui run build) from there.
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: "Tofu Nuggets ${{ github.ref_name }}"
+          releaseBody: "See the assets to download and install."
+          # Create as a draft so the release is reviewed and published by hand
+          # (publishing is the outward-facing step). The updater only sees it
+          # once it is published as the latest release.
+          releaseDraft: true
+          prerelease: false
