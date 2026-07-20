@@ -62,6 +62,12 @@ cargo tauri build
 Windows 10 and Windows 11 only. The hover, DPI, and overlay code is Win32/UIA-specific;
 other platforms are out of scope for now.
 
+## Security
+
+Found a vulnerability? Please **don't** open a public issue — see
+[docs/SECURITY.md](docs/SECURITY.md) for how to report it and for the project's
+secret-hygiene rules (what never to commit, how update-signing keys are handled).
+
 ## License
 
 All rights reserved (no license granted yet). Licensing to be decided.

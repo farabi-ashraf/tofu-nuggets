@@ -2,6 +2,17 @@
 **/target/
 *.pdb
 node_modules/
+dist/
 app/ui/dist/
 .claude/settings.local.json
 .claude/launch.json
+
+# Secrets — never commit (see docs/SECURITY.md)
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*signing*.txt
+*.log

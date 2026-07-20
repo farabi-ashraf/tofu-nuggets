@@ -15,6 +15,8 @@
 - **Build note**: frontend is Vite-built now — run `npm run build` in `app/ui` BEFORE `cargo build` (assets embed from `ui/dist`).
 - **Demo state**: two seeded nuggets live on the real desktop — `Works` folder and `Untitled-1.psd` (sidecars under `OneDrive\Desktop`). Run `app/src-tauri/target/debug/tofu-nuggets.exe`, hover those icons on the desktop.
 
+- **Pre-public security gate (2026-07-20, in progress)**: full-history scan (28 commits) = **no secrets** (no keys/tokens/passwords/.env/.pem ever committed; no signing key in tree). 2 low findings: `.claude/settings.local.json` leaked the local Windows username + desktop paths in 4 old commits (untracked now); the old committer personal email in all commits. `.gitignore` hardened; `docs/SECURITY.md` written + linked from README. **Decisions**: repo goes PUBLIC now. History purge via `git-filter-repo` removes 4 paths from ALL history — `docs/FEASIBILITY.md`, `docs/GIT-GUIDE.md`, `.claude/settings.local.json`, `.claude/launch.json` — same pass rewrites all commit emails to `farabigithub@gmail.com` (owner GitHub email). Then force-push, enable GH protections (secret scanning+push protection, Dependabot, branch protection on main, least-priv Actions), flip public. KEEP: MEMORY.md, docs/V0.1.1.md, ARCHITECTURE.md, MVP.md, README.md, CLAUDE.md, SECURITY.md. **Then B1 steps 2–6** (updater+CI) on branch `wip-b1-updater`.
+
 ## Dev environment notes (this machine)
 
 - Rust via rustup. **Default toolchain now `stable-x86_64-pc-windows-msvc`**; VS Build Tools 2022 + Win 11 SDK installed via winget (2026-07-17). App uses `windows` 0.62. The old GNU-toolchain spike keeps `windows` pinned to 0.58 (raw-dylib/dlltool gap) — leave it.
