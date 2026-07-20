@@ -130,6 +130,42 @@ hotkeyEl.addEventListener("keydown", (e) => {
   commit();
 });
 
+// --- Danger zone: delete all notes. Two-step confirm (arm -> "Sure?", 3 s
+// disarm) mirroring the per-row delete in the main window, since this wipes
+// every sidecar and cannot be undone.
+const deleteAll = document.getElementById("delete-all");
+const deleteAllMsg = document.getElementById("delete-all-msg");
+const DELETE_HINT = deleteAllMsg.textContent;
+let disarm = null;
+
+deleteAll.addEventListener("click", async () => {
+  if (!deleteAll.classList.contains("armed")) {
+    deleteAll.classList.add("armed");
+    deleteAll.textContent = "Delete everything? Click again to confirm";
+    disarm = setTimeout(() => {
+      deleteAll.classList.remove("armed");
+      deleteAll.textContent = "Delete all notes…";
+    }, 3000);
+    return;
+  }
+  clearTimeout(disarm);
+  deleteAll.classList.remove("armed");
+  deleteAll.disabled = true;
+  deleteAll.textContent = "Deleting…";
+  try {
+    const n = await invoke("delete_all_nuggets");
+    deleteAllMsg.textContent = `Deleted ${n} note${n === 1 ? "" : "s"}.`;
+  } catch (e) {
+    deleteAllMsg.textContent = `Could not delete notes: ${e}`;
+  } finally {
+    deleteAll.disabled = false;
+    deleteAll.textContent = "Delete all notes…";
+    setTimeout(() => {
+      deleteAllMsg.textContent = DELETE_HINT;
+    }, 4000);
+  }
+});
+
 invoke("get_settings")
   .then((s) => {
     settings = s;
