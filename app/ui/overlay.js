@@ -32,6 +32,21 @@ invoke("get_current_nugget")
 
 let currentPath = null;
 
+// Header actions (docs/V0.1.1.md A3). Edit hides the panel so it doesn't
+// linger over the opening editor; Open list leaves it to normal leave-hide.
+document.getElementById("btn-edit").addEventListener("click", () => {
+  if (!currentPath) return;
+  invoke("edit_nugget", { path: currentPath }).catch(flashError);
+  invoke("hide_overlay").catch(() => {});
+});
+document.getElementById("btn-list").addEventListener("click", () => {
+  invoke("open_main").catch(flashError);
+  invoke("hide_overlay").catch(() => {});
+});
+document.getElementById("btn-close").addEventListener("click", () => {
+  invoke("hide_overlay").catch(flashError);
+});
+
 // Click a link in the note: nugget:// opens Explorer at the target, http(s)
 // opens the browser. Both are backend commands (the panel can't navigate).
 noteEl.addEventListener("click", (e) => {

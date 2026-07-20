@@ -110,27 +110,39 @@ fn run(uia: DesktopUia, paused: Paused, settings: settings::Shared) -> Result<()
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
 
         // Push-based updates: foreground switches and window moves re-run the
-        // occlusion pass (coalesced via EVENT_TIMER). Hooks belong to this
-        // thread's message loop; own-process windows are skipped.
-        let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
-        let _fg: HWINEVENTHOOK = SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
-            None,
-            Some(win_event),
-            0,
-            0,
-            flags,
-        );
-        let _loc: HWINEVENTHOOK = SetWinEventHook(
-            EVENT_OBJECT_LOCATIONCHANGE,
-            EVENT_OBJECT_LOCATIONCHANGE,
-            None,
-            Some(win_event),
-            0,
-            0,
-            flags,
-        );
+        // occlusion pass (coalesced via EVENT_TIMER, cross-thread SetTimer on
+        // our hwnd). The hooks get their OWN message-loop thread: mixing a
+        // WinEvent hook onto a UIA-client thread risks reentrancy deadlocks
+        // (UIA calls pump messages while waiting on the provider).
+        std::thread::Builder::new()
+            .name("badge-hooks".into())
+            .spawn(|| {
+                let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+                let _fg: HWINEVENTHOOK = SetWinEventHook(
+                    EVENT_SYSTEM_FOREGROUND,
+                    EVENT_SYSTEM_FOREGROUND,
+                    None,
+                    Some(win_event),
+                    0,
+                    0,
+                    flags,
+                );
+                let _loc: HWINEVENTHOOK = SetWinEventHook(
+                    EVENT_OBJECT_LOCATIONCHANGE,
+                    EVENT_OBJECT_LOCATIONCHANGE,
+                    None,
+                    Some(win_event),
+                    0,
+                    0,
+                    flags,
+                );
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            })
+            .expect("spawn badge hooks");
 
         SetTimer(Some(hwnd), REFRESH_TIMER_ID, REFRESH_MS, None);
         full_refresh(hwnd, &mut *ctx);

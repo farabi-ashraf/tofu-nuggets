@@ -88,6 +88,30 @@ body {
   min-width: 0;
 }
 
+.actions {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.action {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: calc(13px * var(--font-scale) * var(--panel-scale));
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--fg);
+  background: var(--panel-border);
+}
+
 .dot {
   flex: none;
   width: 8px;

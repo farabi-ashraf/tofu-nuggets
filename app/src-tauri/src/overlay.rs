@@ -5,6 +5,16 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder}
 
 pub const LABEL: &str = "overlay";
 
+/// Hide the panel immediately (✕ button / after ✎ Edit). A command instead of
+/// the `core:window:allow-hide` permission keeps the capability surface small
+/// (docs/V0.1.1.md A3).
+#[tauri::command]
+pub fn hide_overlay(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(LABEL) {
+        let _ = win.hide();
+    }
+}
+
 pub fn get_or_create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(win) = app.get_webview_window(LABEL) {
         return Ok(win);

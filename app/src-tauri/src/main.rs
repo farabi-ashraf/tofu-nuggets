@@ -80,6 +80,8 @@ fn main() {
             links::open_external,
             mainwin::list_nuggets,
             mainwin::edit_nugget,
+            mainwin::open_main,
+            overlay::hide_overlay,
             settings::get_settings,
             settings::set_settings
         ])

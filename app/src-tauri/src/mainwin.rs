@@ -31,6 +31,16 @@ pub fn edit_nugget(app: AppHandle, path: String) {
     });
 }
 
+/// Open (or focus) the all-nuggets list from the panel's ☰ button. Same
+/// marshaling as `edit_nugget`: window creation deadlocks on the async
+/// command thread, so hop to a worker thread.
+#[tauri::command]
+pub fn open_main(app: AppHandle) {
+    std::thread::spawn(move || {
+        show(&app);
+    });
+}
+
 pub fn show(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(LABEL) {
         let _ = win.show();
