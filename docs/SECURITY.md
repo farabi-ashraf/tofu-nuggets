@@ -75,3 +75,17 @@ public remote.
    supersede it.
 4. **Record it.** Note what leaked and the rotation in `MEMORY.md` so the next session
    knows the key changed.
+
+## Accepted findings (not affected)
+
+Advisories that are real upstream but unreachable in the shipped product. Re-check when
+the underlying dependency moves.
+
+- **`glib` < 0.20 (RUSTSEC-2024-0429, moderate)** — pulled only through the GTK stack
+  (`glib → gtk 0.18 → tao/webkit2gtk → tauri`), which Tauri gates behind
+  `cfg(target_os = "linux")`. The build is Windows-only, so glib is never compiled or
+  shipped: `cargo tree -i glib --target x86_64-pc-windows-msvc` prints nothing. It cannot
+  be bumped in isolation (`gtk 0.18` pins `glib ^0.18`, and Tauri 2.11 owns the gtk
+  stack), which is why Dependabot's auto-update job fails. Dependabot alert dismissed as
+  "Vulnerable code is not actually used." Revisit if/when a Linux build is added or Tauri
+  moves to glib ≥ 0.20.
