@@ -29,8 +29,20 @@
 ## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1; Route 3 deferred
 
 **Route 2 SHIPPED (2026-07-21)**: PR #8 merged, owner tested drag-drop on desktop —
-works. Declared stable → **0.2.0 release in progress** (bump PR `wip-bump-0.2.0`;
-minor bump because drag-drop is a feature). After 0.2.0 ships: begin Route 1.
+works. Declared stable: **v0.2.0 tagged** (PR #9 bump; minor because feature), CI
+building signed draft — owner publishes when done. Next: **Route 1 (macOS port)**.
+
+**Route 1 test strategy CONFIRMED (owner, 2026-07-21)**:
+- **CI matrix from day 1**: every PR compiles + unit-tests on Apple-silicon macOS
+  runner (`macos-14`/`15`), .dmg/.app artifacts attached for download. CI is the
+  compile/test gate only — it can NOT test behavior (Accessibility/AX permission needs
+  a GUI grant; hover/overlay/badges need eyes).
+- **Behavior testing on owner's work M4 Mac Mini**: self-managed (owner is admin, no
+  IT/MDM, no workplace policy issue), runs **macOS 26 Tahoe**. Owner sideloads CI
+  artifacts during work hours and runs a per-build manual checklist (hover, overlay,
+  badges, editor, drag-drop, settings, Gatekeeper "Open Anyway" flow).
+- Hardware covers macOS 26 only; macOS 14/15 coverage = CI compile + invited beta
+  testers later.
 
 Implementation record: dropping files/folders
 onto the open editor inserts `nugget://` links — same `insertPathLink` pipeline as the
