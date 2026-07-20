@@ -28,9 +28,23 @@
 
 ## Next step — CONFIRMED plan (owner, 2026-07-20): Route 2 → stable → Route 1; Route 3 deferred
 
-**Route 2 SHIPPED (2026-07-21)**: PR #8 merged, owner tested drag-drop on desktop —
-works. Declared stable: **v0.2.0 tagged** (PR #9 bump; minor because feature), CI
-building signed draft — owner publishes when done. Next: **Route 1 (macOS port)**.
+**Route 2 SHIPPED, v0.2.0 published (2026-07-21)** — updater live-verified by owner.
+
+**Route 1 STARTED (2026-07-21)**, first PR `wip-route1-scaffold`:
+- `DesktopIcons` trait extracted to `icons.rs` (portable `Icon`/`IconRect`); Windows
+  impl = `desktop.rs` (UIA), macOS = `desktop_mac.rs` stub (hover/badges inert,
+  `cursor_pos` → None; real `~/Desktop` root so storage/editor/list work). Hover
+  engine + editor now platform-agnostic (no `windows::` imports).
+- Windows deps moved to `[target.'cfg(windows)'.dependencies]`; badges cfg-gated
+  (inline no-op stub module in main.rs); links.rs has Finder impl (`open` / `open -R`);
+  `hide_dir` no-op on mac (dot prefix); `webview_missing_alert` cfg(windows).
+- New `.github/workflows/ci.yml`: PR/push → fmt+clippy(-D warnings)+test matrix on
+  windows-latest + macos-latest. **macOS compile status verified by this CI**, not
+  locally.
+- README rewritten (owner request): v0.2.0, per-function usage guide, macOS-port note.
+- Remaining Route 1 work: AX-API hover impl, macOS overlay/panel look, badge
+  equivalent, hotkey/tray/updater verification on Mini, .dmg artifact in CI for
+  sideloading, Gatekeeper docs.
 
 **Route 1 test strategy CONFIRMED (owner, 2026-07-21)**:
 - **CI matrix from day 1**: every PR compiles + unit-tests on Apple-silicon macOS

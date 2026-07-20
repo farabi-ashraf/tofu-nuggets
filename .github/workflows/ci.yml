@@ -1,0 +1,59 @@
+name: ci
+
+# Compile/test gate on every PR and push to main, on both target platforms
+# (B2: one branch, CI matrix — no per-platform branches). macOS runners are
+# Apple silicon, matching the beta target hardware. This is only the compile
+# and unit-test gate: behavior (hover, overlay, badges) is verified by hand —
+# CI cannot grant the Accessibility permission the macOS hover engine needs.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # Frontend must be built first: tauri's generate_context! embeds
+      # app/ui/dist at compile time.
+      - name: Build frontend
+        run: npm ci && npm run build
+        working-directory: app/ui
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: app/src-tauri
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: app/src-tauri
+
+      - name: Tests
+        run: cargo test
+        working-directory: app/src-tauri

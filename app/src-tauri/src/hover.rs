@@ -1,20 +1,20 @@
 //! Hover engine: watches the cursor, shows the overlay panel over annotated
 //! desktop icons, hides it when the cursor leaves.
 //!
-//! Budget rules (docs/ARCHITECTURE.md): 10 Hz cursor polling only; the UIA
-//! hit-test fires once per cursor rest (~400 ms), never continuously. While a
-//! panel is visible, leave-detection is cheap rect math, not UIA.
+//! Budget rules (docs/ARCHITECTURE.md): 10 Hz cursor polling only; the
+//! platform hit-test fires once per cursor rest (~400 ms), never continuously.
+//! While a panel is visible, leave-detection is cheap rect math, not a
+//! hit-test. Platform-agnostic by design: all icon/cursor access goes through
+//! `crate::icons` (B2) — no `windows::` imports here.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State};
-use windows::Win32::Foundation::{POINT, RECT};
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use crate::appstate::Paused;
-use crate::desktop::{self, DesktopUia};
+use crate::icons::{self, DesktopIcons, IconRect};
 use crate::{overlay, settings, storage};
 
 const POLL_MS: u64 = 100;
@@ -53,25 +53,25 @@ pub fn spawn(app: AppHandle, paused: Paused) {
     std::thread::Builder::new()
         .name("hover-engine".into())
         .spawn(move || {
-            desktop::init_com_for_thread();
-            let uia = match DesktopUia::new() {
+            icons::init_thread();
+            let provider = match icons::new_icons() {
                 Ok(u) => u,
                 Err(e) => {
-                    eprintln!("hover engine: UIA init failed: {e}");
+                    eprintln!("hover engine: icon provider init failed: {e}");
                     return;
                 }
             };
-            run(&app, &uia, &paused);
+            run(&app, &provider, &paused);
         })
         .expect("spawn hover engine");
 }
 
-fn run(app: &AppHandle, uia: &DesktopUia, paused: &Paused) {
-    let mut last_pos = POINT { x: -1, y: -1 };
+fn run(app: &AppHandle, provider: &impl DesktopIcons, paused: &Paused) {
+    let mut last_pos = (-1, -1);
     let mut rest_since: Option<Instant> = None;
     let mut tested_at_rest = false;
     // Icon + panel rects currently showing, plus when the cursor left them.
-    let mut shown: Option<(RECT, RECT)> = None;
+    let mut shown: Option<(IconRect, IconRect)> = None;
     let mut outside_since: Option<Instant> = None;
     // Panel-hidden timestamp driving WebView2 idle release.
     let mut idle_since = Instant::now();
@@ -98,12 +98,11 @@ fn run(app: &AppHandle, uia: &DesktopUia, paused: &Paused) {
             let _ = app.run_on_main_thread(move || overlay::destroy(&ah));
         }
 
-        let mut pt = POINT::default();
-        if unsafe { GetCursorPos(&mut pt) }.is_err() {
+        let Some(pt) = icons::cursor_pos() else {
             continue;
-        }
+        };
 
-        let moved = pt.x != last_pos.x || pt.y != last_pos.y;
+        let moved = pt != last_pos;
         if moved {
             last_pos = pt;
             rest_since = Some(Instant::now());
@@ -133,7 +132,7 @@ fn run(app: &AppHandle, uia: &DesktopUia, paused: &Paused) {
         }
         tested_at_rest = true;
 
-        let Some(icon) = uia.icon_at(pt) else {
+        let Some(icon) = provider.icon_at(pt.0, pt.1) else {
             continue;
         };
         let Some(path) = icon.path.as_ref() else {
@@ -159,26 +158,26 @@ fn run(app: &AppHandle, uia: &DesktopUia, paused: &Paused) {
 }
 
 /// Icon rect (padded) or panel rect keeps the panel open.
-fn point_in_hover_zone(pt: POINT, icon: &RECT, panel: &RECT) -> bool {
+fn point_in_hover_zone(pt: (i32, i32), icon: &IconRect, panel: &IconRect) -> bool {
     let pad = 4;
-    let in_icon = pt.x >= icon.left - pad
-        && pt.x <= icon.right + pad
-        && pt.y >= icon.top - pad
-        && pt.y <= icon.bottom + pad;
-    let in_panel =
-        pt.x >= panel.left && pt.x <= panel.right && pt.y >= panel.top && pt.y <= panel.bottom;
+    let (x, y) = pt;
+    let in_icon = x >= icon.left - pad
+        && x <= icon.right + pad
+        && y >= icon.top - pad
+        && y <= icon.bottom + pad;
+    let in_panel = x >= panel.left && x <= panel.right && y >= panel.top && y <= panel.bottom;
     in_icon || in_panel
 }
 
 /// Panel goes to the right of the icon in physical pixels, flipped left when
 /// it would run off the virtual screen's right edge.
-fn panel_rect(icon: &RECT, pw: i32, ph: i32, screen_w: i32) -> RECT {
+fn panel_rect(icon: &IconRect, pw: i32, ph: i32, screen_w: i32) -> IconRect {
     let mut left = icon.right + PANEL_GAP;
     if left + pw > screen_w {
         left = icon.left - PANEL_GAP - pw;
     }
     let top = icon.top.max(0);
-    RECT {
+    IconRect {
         left,
         top,
         right: left + pw,
@@ -186,16 +185,8 @@ fn panel_rect(icon: &RECT, pw: i32, ph: i32, screen_w: i32) -> RECT {
     }
 }
 
-fn virtual_screen_width() -> i32 {
-    unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
-            windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN,
-        )
-    }
-}
-
 /// Returns the panel's physical rect when shown.
-fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option<RECT> {
+fn show_panel(app: &AppHandle, icon_rect: &IconRect, payload: ShowPayload) -> Option<IconRect> {
     let win = overlay::get_or_create(app).ok()?;
     let sf = win.scale_factor().unwrap_or(1.0);
     // User panel zoom (1.0–1.5); the page also scales its font by the same
@@ -207,7 +198,7 @@ fn show_panel(app: &AppHandle, icon_rect: &RECT, payload: ShowPayload) -> Option
         .unwrap_or(1.0);
     let pw = (PANEL_W * sf * zoom).round() as i32;
     let ph = (PANEL_H * sf * zoom).round() as i32;
-    let r = panel_rect(icon_rect, pw, ph, virtual_screen_width());
+    let r = panel_rect(icon_rect, pw, ph, icons::virtual_screen_width());
     // Stash for freshly created pages, then emit for already-loaded ones.
     if let Ok(mut cur) = app.state::<CurrentNugget>().0.lock() {
         *cur = Some(payload.clone());
@@ -229,8 +220,8 @@ fn hide_panel(app: &AppHandle) {
 mod tests {
     use super::*;
 
-    fn icon(left: i32, top: i32) -> RECT {
-        RECT {
+    fn icon(left: i32, top: i32) -> IconRect {
+        IconRect {
             left,
             top,
             right: left + 76,
@@ -272,7 +263,7 @@ mod tests {
 
     #[test]
     fn top_is_clamped_to_screen() {
-        let ic = RECT {
+        let ic = IconRect {
             left: 100,
             top: -30,
             right: 176,

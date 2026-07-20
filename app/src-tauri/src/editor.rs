@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use crate::desktop::DesktopUia;
+use crate::icons::{self, DesktopIcons};
 use crate::index::NuggetIndex;
 use crate::{overlay, storage};
 
@@ -96,21 +96,16 @@ fn remove_nugget(
 /// Hotkey entry: open the editor for the icon under the cursor, falling back
 /// to the selected desktop icon. Runs on the main thread (shortcut handler).
 pub fn open_for_target(app: &AppHandle) {
-    let uia = match DesktopUia::new() {
+    let provider = match icons::new_icons() {
         Ok(u) => u,
         Err(e) => {
-            crate::logfile::log(app, &format!("editor: UIA init failed: {e}"));
+            crate::logfile::log(app, &format!("editor: icon provider init failed: {e}"));
             return;
         }
     };
 
-    let mut pt = windows::Win32::Foundation::POINT::default();
-    let under_cursor = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt)
-            .ok()
-            .and_then(|_| uia.icon_at(pt))
-    };
-    let target = under_cursor.or_else(|| uia.selected_icon());
+    let under_cursor = icons::cursor_pos().and_then(|(x, y)| provider.icon_at(x, y));
+    let target = under_cursor.or_else(|| provider.selected_icon());
 
     let Some(icon) = target else {
         crate::logfile::log(app, "editor: no desktop icon under cursor or selected");

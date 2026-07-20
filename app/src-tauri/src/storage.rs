@@ -247,6 +247,7 @@ fn sidecar_path_for_file(item: &Path) -> Option<PathBuf> {
 }
 
 /// Best-effort FILE_ATTRIBUTE_HIDDEN on the .nuggets directory.
+#[cfg(windows)]
 fn hide_dir(dir: &Path) {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
@@ -264,6 +265,10 @@ fn hide_dir(dir: &Path) {
         }
     }
 }
+
+/// The `.nuggets` dot prefix already hides the folder on macOS/Unix.
+#[cfg(not(windows))]
+fn hide_dir(_dir: &Path) {}
 
 #[cfg(test)]
 mod tests {

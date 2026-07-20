@@ -10,10 +10,20 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-ico"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+notify = "8.2.0"
+tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-dialog = "2.7.1"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-single-instance = "2.4.3"
+tauri-plugin-updater = "2"
+
+# Windows-only: Win32/UIA interop + the WebView2 transparency fix. The
+# aliased windows-core 0.61 must match tauri's webview2-com — load-bearing,
+# see MEMORY.md / ARCHITECTURE.md §2.
+[target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
 windows-core-061 = { package = "windows-core", version = "0.61" }
-
-
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
@@ -26,13 +36,6 @@ windows = { version = "0.62", features = [
     "Win32_System_LibraryLoader",
     "Win32_Graphics_Dwm",
 ] }
-rusqlite = { version = "0.40.1", features = ["bundled"] }
-notify = "8.2.0"
-tauri-plugin-global-shortcut = "2.3.2"
-tauri-plugin-dialog = "2.7.1"
-tauri-plugin-autostart = "2.5.1"
-tauri-plugin-single-instance = "2.4.3"
-tauri-plugin-updater = "2"
 
 [dev-dependencies]
 tempfile = "3.27.0"

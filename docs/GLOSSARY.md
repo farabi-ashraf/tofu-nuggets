@@ -22,16 +22,19 @@
 | **`nugget://` link** | Editor link scheme for file/folder targets, resolved by `links.rs` via ShellExecute. |
 | **Idle release** | Destroying the overlay window after inactivity so WebView2's process tree exits (RAM back to core baseline); recreated on next hover. |
 | **Virtual icon** | Desktop item with no filesystem path (This PC, Recycle Bin) — not annotatable. |
+| **`DesktopIcons` trait** | Portable icon-provider abstraction in `icons.rs` (B2). Windows impl = `desktop.rs` (UIA); macOS = `desktop_mac.rs` (stub until AX-API impl lands). Hover engine, editor, and main wiring only touch `crate::icons`. |
 
 ## Code map — `app/src-tauri/src/`
 
 | File | Owns | Key entry points |
 |---|---|---|
 | `main.rs` | App wiring: plugins, managed state, command registry, startup (WebView2 guard, index rebuild, watcher, hotkey, hover, badges, tray) | `main`, `webview_missing_alert` |
-| `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip) | `spawn`, `get_current_nugget` |
-| `desktop.rs` | UIA desktop-icon detection, display-name→path resolution, desktop roots, infotip suppression | `icon_at`, `desktop_dirs`, `suppress_desktop_infotips` |
+| `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
+| `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …) | `DesktopIcons`, `new_icons` |
+| `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection, display-name→path resolution, desktop roots, infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
+| `desktop_mac.rs` | **macOS** `DesktopIcons` stub (hover/badges inert); real `~/Desktop` root so storage/editor/list work. AX-API impl replaces it (Route 1) | `MacIcons` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
-| `badges.rs` | Badge layer: dot painting, per-dot occlusion, WinEvent-driven refresh | `spawn` |
+| `badges.rs` | Badge layer: dot painting, per-dot occlusion, WinEvent-driven refresh. Windows-only (no-op stub on macOS, see main.rs) | `spawn` |
 | `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir` |
 | `index.rs` | SQLite cache: rebuild scan, upsert/remove/rename, list, clear | `NuggetIndex`, `scan_root` |
 | `watcher.rs` | FS watcher keeping sidecars+index in step with renames/deletes on watched roots | `spawn`, `handle_event` |
@@ -63,6 +66,7 @@
 | `app/src-tauri/nsis/hooks.nsh` | Uninstaller message (notes stay on disk) |
 | `app/src-tauri/capabilities/default.json` | Webview permission grants (write-ops need explicit allows) |
 | `.github/workflows/release.yml` | Tag `v*` → build+sign → draft release + `latest.json` |
+| `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests) |
 | `spikes/` | Historical go/no-go spikes (hover-detect GO; badge-reparent NO-GO) with findings in their READMEs |
 | `%APPDATA%\com.tofunuggets.app\` | settings.json, index.db, tofu.log (per-user runtime data) |
 
