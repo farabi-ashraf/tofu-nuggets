@@ -64,9 +64,12 @@ jobs:
       # secret and updater .dmgs are not what this artifact is for.
       - name: Build .dmg
         if: matrix.os == 'macos-latest'
+        # beforeBuildCommand is cleared: the frontend is already built by the
+        # earlier step, and the CLI resolves the command's relative path from
+        # a different cwd than tauri-action does (release.yml keeps it).
         run: >
           npx --yes @tauri-apps/cli@^2 build --bundles dmg
-          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
         working-directory: app/src-tauri
 
       - name: Upload .dmg artifact
