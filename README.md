@@ -75,7 +75,8 @@ index can be deleted and rebuilt from them at any time.
 ## Building from source
 
 Requires [Rust](https://www.rust-lang.org/tools/install), [Node.js](https://nodejs.org/),
-and the Tauri prerequisites for Windows (WebView2, MSVC build tools).
+and the Tauri prerequisites for your platform — Windows: WebView2 + MSVC build
+tools; macOS: Xcode Command Line Tools.
 
 ```bash
 # install UI dependencies
@@ -94,8 +95,11 @@ cargo tauri build
 
 Windows 10 and Windows 11. A macOS port (macOS 14+, Apple silicon) is under way:
 the codebase is single-branch with platform code behind traits/`#[cfg]`, and CI
-compiles and tests every change on both platforms. macOS hover/badges are not
-functional yet.
+compiles and tests every change on both platforms — each CI run also uploads an
+ad-hoc-signed arm64 `.dmg` artifact for testing. Hover requires the Accessibility
+permission; because beta builds are not notarized, the first launch needs
+System Settings → Privacy & Security → "Open Anyway". Badges and icon-selection
+targeting are not ported yet.
 
 ## Security
 

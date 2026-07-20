@@ -57,3 +57,22 @@ jobs:
       - name: Tests
         run: cargo test
         working-directory: app/src-tauri
+
+      # Sideloadable arm64 build for beta hardware testing (ad-hoc signed;
+      # first launch needs System Settings → Privacy & Security → "Open
+      # Anyway"). Updater artifacts are skipped: the signing key is a release
+      # secret and updater .dmgs are not what this artifact is for.
+      - name: Build .dmg
+        if: matrix.os == 'macos-latest'
+        run: >
+          npx --yes @tauri-apps/cli@^2 build --bundles dmg
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        working-directory: app/src-tauri
+
+      - name: Upload .dmg artifact
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tofu-nuggets-macos-arm64-dmg
+          path: app/src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 14
