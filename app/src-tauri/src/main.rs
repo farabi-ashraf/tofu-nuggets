@@ -105,6 +105,13 @@ fn main() {
             settings::set_settings
         ])
         .setup(|app| {
+            // Tofu Nuggets lives in the tray/menu bar, not the Dock: as a
+            // Regular app macOS treats it as window-driven, which both puts a
+            // Dock icon on a background utility and ties its lifetime to
+            // having windows around. Accessory is the menu-bar-agent policy.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             // Warm overlay at startup; the hover engine destroys it after
             // idle and recreates it on demand. Failure here is the
             // WebView2-missing signature ("tray alive, all windows dead") —
@@ -163,13 +170,29 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|app, event| match event {
             // Background app: keep running when the overlay window (often the
             // only window) is destroyed for idle release.
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                logfile::log(app, &format!("exit requested (code {code:?})"));
                 if code.is_none() {
                     api.prevent_exit();
                 }
             }
+            // These three exist to tell a clean shutdown apart from a crash in
+            // the log: a macOS tester saw the process vanish whenever the
+            // panel hid with no other window open, and silence here is what
+            // made that ambiguous.
+            tauri::RunEvent::Exit => logfile::log(app, "exiting"),
+            tauri::RunEvent::WindowEvent { label, event, .. } => match event {
+                tauri::WindowEvent::Destroyed => {
+                    logfile::log(app, &format!("window '{label}' destroyed"))
+                }
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    logfile::log(app, &format!("window '{label}' close requested"))
+                }
+                _ => {}
+            },
+            _ => {}
         });
 }
