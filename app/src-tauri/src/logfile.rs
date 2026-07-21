@@ -4,11 +4,11 @@
 
 use std::io::Write;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub fn log(app: &AppHandle, msg: &str) {
     eprintln!("{msg}");
-    let Ok(dir) = app.path().app_data_dir() else {
+    let Ok(dir) = crate::paths::data_dir(app) else {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);

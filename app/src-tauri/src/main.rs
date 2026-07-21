@@ -22,6 +22,7 @@ mod links;
 mod logfile;
 mod mainwin;
 mod overlay;
+mod paths;
 mod settings;
 mod storage;
 mod tray;
@@ -128,7 +129,7 @@ fn main() {
             // the user's own desktop `.nuggets` (docs/V0.1.1.md A4). First
             // root is FOLDERID_Desktop.
             storage::set_redirect_root(roots.first().cloned());
-            let db_path = app.path().app_data_dir()?.join("index.db");
+            let db_path = paths::data_dir(app.handle())?.join("index.db");
             let mut idx = index::NuggetIndex::open(&db_path)?;
             if let Err(e) = idx.rebuild(&roots) {
                 eprintln!("index rebuild failed: {e}");

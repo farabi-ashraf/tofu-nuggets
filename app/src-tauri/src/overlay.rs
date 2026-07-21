@@ -98,7 +98,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     Ok(overlay)
 }
 
-/// Destroy the overlay window (and with it the WebView2 processes).
+/// Destroy the overlay window (and with it the WebView2 processes). Windows
+/// only: idle release exists for WebView2's process tree, and macOS keeps the
+/// panel window alive for its whole run (see `hover::run`).
+#[cfg(windows)]
 pub fn destroy(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(LABEL) {
         match win.destroy() {
@@ -108,6 +111,7 @@ pub fn destroy(app: &AppHandle) {
     }
 }
 
+#[cfg(windows)]
 pub fn exists(app: &AppHandle) -> bool {
     app.get_webview_window(LABEL).is_some()
 }

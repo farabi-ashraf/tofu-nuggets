@@ -11,7 +11,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(not(windows))]
+use tauri::{LogicalPosition, LogicalSize};
+#[cfg(windows)]
+use tauri::{PhysicalPosition, PhysicalSize};
 
 use crate::appstate::Paused;
 use crate::icons::{self, DesktopIcons, IconRect};
@@ -25,6 +29,7 @@ const PANEL_W: f64 = 340.0;
 const PANEL_H: f64 = 240.0;
 const PANEL_GAP: i32 = 8;
 
+#[cfg(windows)]
 fn idle_release_secs() -> u64 {
     std::env::var("TOFU_IDLE_RELEASE_SECS")
         .ok()
@@ -73,8 +78,11 @@ fn run(app: &AppHandle, provider: &impl DesktopIcons, paused: &Paused) {
     // Icon + panel rects currently showing, plus when the cursor left them.
     let mut shown: Option<(IconRect, IconRect)> = None;
     let mut outside_since: Option<Instant> = None;
-    // Panel-hidden timestamp driving WebView2 idle release.
+    // Panel-hidden timestamp driving WebView2 idle release (Windows-only, as
+    // is the release itself).
+    #[cfg(windows)]
     let mut idle_since = Instant::now();
+    #[cfg(windows)]
     let idle_release = Duration::from_secs(idle_release_secs());
 
     loop {
@@ -85,14 +93,21 @@ fn run(app: &AppHandle, provider: &impl DesktopIcons, paused: &Paused) {
             if shown.take().is_some() {
                 hide_panel(app);
                 outside_since = None;
-                idle_since = Instant::now();
+                #[cfg(windows)]
+                {
+                    idle_since = Instant::now();
+                }
             }
             continue;
         }
 
         // Idle release: destroy the (hidden) overlay window so WebView2's
         // process tree is reclaimed; recreated on next hover. Window teardown
-        // must happen on the main thread.
+        // must happen on the main thread. Windows-only: this exists for
+        // WebView2's ~380 MB process tree, while WKWebView has no equivalent
+        // cost, and recreating an AppKit window per hover is a crash risk we
+        // have no reason to take.
+        #[cfg(windows)]
         if shown.is_none() && overlay::exists(app) && idle_since.elapsed() >= idle_release {
             let ah = app.clone();
             let _ = app.run_on_main_thread(move || overlay::destroy(&ah));
@@ -119,7 +134,10 @@ fn run(app: &AppHandle, provider: &impl DesktopIcons, paused: &Paused) {
                     hide_panel(app);
                     shown = None;
                     outside_since = None;
-                    idle_since = Instant::now();
+                    #[cfg(windows)]
+                    {
+                        idle_since = Instant::now();
+                    }
                 }
             }
             continue; // while shown, no new hit-tests needed
@@ -185,10 +203,15 @@ fn panel_rect(icon: &IconRect, pw: i32, ph: i32, screen_w: i32) -> IconRect {
     }
 }
 
-/// Returns the panel's physical rect when shown.
+/// Returns the panel's rect (engine units) when shown.
 fn show_panel(app: &AppHandle, icon_rect: &IconRect, payload: ShowPayload) -> Option<IconRect> {
     let win = overlay::get_or_create(app).ok()?;
+    // Engine units are physical pixels on Windows, so the panel is sized in
+    // them; macOS works in points, which already absorb the display scale.
+    #[cfg(windows)]
     let sf = win.scale_factor().unwrap_or(1.0);
+    #[cfg(not(windows))]
+    let sf = 1.0;
     // User panel zoom (1.0–1.5); the page also scales its font by the same
     // factor (--panel-scale) so the whole panel grows together.
     let zoom = app
@@ -204,16 +227,48 @@ fn show_panel(app: &AppHandle, icon_rect: &IconRect, payload: ShowPayload) -> Op
         *cur = Some(payload.clone());
     }
     let _ = app.emit("nugget:show", payload);
-    let _ = win.set_size(PhysicalSize::new(pw as u32, ph as u32));
-    let _ = win.set_position(PhysicalPosition::new(r.left, r.top));
-    let _ = win.show();
+    place_panel(app, &win, pw, ph, &r);
     Some(r)
 }
 
+/// Move, size and show the panel. Both the units and the thread differ by
+/// platform: Windows takes physical pixels and tolerates these calls from the
+/// hover thread, while macOS speaks points and requires every AppKit window
+/// call on the main thread — doing it here killed the process a few seconds
+/// into the first successful hover.
+#[cfg(windows)]
+fn place_panel(_app: &AppHandle, win: &tauri::WebviewWindow, pw: i32, ph: i32, r: &IconRect) {
+    let _ = win.set_size(PhysicalSize::new(pw as u32, ph as u32));
+    let _ = win.set_position(PhysicalPosition::new(r.left, r.top));
+    let _ = win.show();
+}
+
+#[cfg(not(windows))]
+fn place_panel(app: &AppHandle, win: &tauri::WebviewWindow, pw: i32, ph: i32, r: &IconRect) {
+    let win = win.clone();
+    let (left, top) = (r.left, r.top);
+    let _ = app.run_on_main_thread(move || {
+        let _ = win.set_size(LogicalSize::new(pw as f64, ph as f64));
+        let _ = win.set_position(LogicalPosition::new(left as f64, top as f64));
+        let _ = win.show();
+    });
+}
+
+#[cfg(windows)]
 fn hide_panel(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(overlay::LABEL) {
         let _ = win.hide();
     }
+}
+
+#[cfg(not(windows))]
+fn hide_panel(app: &AppHandle) {
+    let Some(win) = app.get_webview_window(overlay::LABEL) else {
+        return;
+    };
+    let _ = app.run_on_main_thread(move || {
+        let _ = win.hide();
+    });
 }
 
 #[cfg(test)]

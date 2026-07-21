@@ -53,7 +53,7 @@ impl Settings {
 pub type Shared = Arc<Mutex<Settings>>;
 
 fn file_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    let dir = app.path().app_data_dir().ok()?;
+    let dir = crate::paths::data_dir(app).ok()?;
     let _ = std::fs::create_dir_all(&dir);
     Some(dir.join("settings.json"))
 }
