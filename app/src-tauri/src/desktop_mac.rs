@@ -18,10 +18,14 @@
 //! `AXIsProcessTrustedWithOptions`; until granted, AX calls fail and hover
 //! stays inert (a grant may need an app restart to take effect).
 //!
-//! Units: AX and CoreGraphics speak POINTS (global, top-left origin); the
-//! `DesktopIcons` contract and the hover engine speak physical PIXELS. All
-//! conversion happens here, using the backing scale of the display that
-//! contains the coordinate — never let points leak out of this module.
+//! Units: everything here stays in POINTS (global, top-left origin), which is
+//! exactly what Tauri calls a *logical* coordinate, so the hover engine hands
+//! these straight to `LogicalPosition`/`LogicalSize`. An earlier version
+//! converted to physical pixels with `CGDisplayPixelsWide / CGDisplayBounds`;
+//! that ratio is NOT the window backing scale on displays running a scaled
+//! resolution (pixels/points can be 1.5 while the backing scale is 2.0), and
+//! the panel landed far from its icon. Do not reintroduce the conversion —
+//! see `hover::place_panel` for the matching platform split.
 //!
 //! FFI is hand-declared (no bindings crate): only simple C functions from
 //! the ApplicationServices umbrella framework, kept to the minimum this
@@ -322,8 +326,7 @@ fn chain_is_desktop(chain: &[CfOwned]) -> bool {
 /// hotkey never firing, which cost a full hardware test round.
 pub fn debug_cursor_chain() -> Option<String> {
     let (x, y) = cursor_pos()?;
-    let scale = scale_at_pts(x as f64, y as f64);
-    let (xp, yp) = (x as f64 / scale, y as f64 / scale);
+    let (xp, yp) = (x as f64, y as f64);
     let system_wide = CfOwned::new(unsafe { AXUIElementCreateSystemWide() })?;
     let mut raw: AXUIElementRef = std::ptr::null();
     let err =
@@ -362,17 +365,7 @@ pub fn debug_cursor_chain() -> Option<String> {
 
 impl DesktopIcons for MacIcons {
     fn icon_at(&self, x: i32, y: i32) -> Option<Icon> {
-        // Engine pixels → AX points. The conversion needs the display's
-        // scale, but the display lookup itself wants points — so probe
-        // twice: first with the raw pixel values (correct whenever the
-        // point's display sits at the origin or scales are uniform), then
-        // re-probe with that estimate. Verify on mixed-DPI multi-monitor
-        // hardware.
-        let scale = scale_at_pts(x as f64, y as f64);
-        let (xp, yp) = (x as f64 / scale, y as f64 / scale);
-        let scale = scale_at_pts(xp, yp);
-        let (xp, yp) = (x as f64 / scale, y as f64 / scale);
-
+        let (xp, yp) = (x as f64, y as f64);
         let mut raw: AXUIElementRef = std::ptr::null();
         let err = unsafe {
             AXUIElementCopyElementAtPosition(self.system_wide.0, xp as f32, yp as f32, &mut raw)
@@ -396,12 +389,11 @@ impl DesktopIcons for MacIcons {
             .chain(chain.iter().take(2))
             .filter(|e| string_attr(e.0, "AXRole").as_deref() != Some("AXScrollArea"))
             .find_map(|e| Some((element_name(e.0)?, frame_pts(e.0)?)))?;
-        let s = scale_at_pts(f.origin.x, f.origin.y);
         let rect = IconRect {
-            left: (f.origin.x * s).round() as i32,
-            top: (f.origin.y * s).round() as i32,
-            right: ((f.origin.x + f.size.width) * s).round() as i32,
-            bottom: ((f.origin.y + f.size.height) * s).round() as i32,
+            left: f.origin.x.round() as i32,
+            top: f.origin.y.round() as i32,
+            right: (f.origin.x + f.size.width).round() as i32,
+            bottom: (f.origin.y + f.size.height).round() as i32,
         };
         let path = resolve_path(&name, &self.dirs);
         Some(Icon { name, rect, path })
@@ -455,19 +447,18 @@ pub fn new_icons() -> Result<MacIcons, String> {
     })
 }
 
-/// Cursor position in physical pixels (CGEvent speaks points).
+/// Cursor position in points, matching every other coordinate here.
 pub fn cursor_pos() -> Option<(i32, i32)> {
     let ev = CfOwned::new(unsafe { CGEventCreate(std::ptr::null()) })?;
     let p = unsafe { CGEventGetLocation(ev.0) };
-    let s = scale_at_pts(p.x, p.y);
-    Some(((p.x * s).round() as i32, (p.y * s).round() as i32))
+    Some((p.x.round() as i32, p.y.round() as i32))
 }
 
-/// Right-most physical-pixel edge across displays (panel edge-flip bound).
+/// Right-most edge across displays, in points (panel edge-flip bound).
 pub fn virtual_screen_width() -> i32 {
     displays()
         .iter()
-        .map(|(b, s)| ((b.origin.x + b.size.width) * s).round() as i32)
+        .map(|(b, _)| (b.origin.x + b.size.width).round() as i32)
         .max()
         .unwrap_or(i32::MAX)
 }

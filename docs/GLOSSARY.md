@@ -45,7 +45,8 @@
 | `tray.rs` | Tray icon + menu (open/pause/settings/autostart/updates/quit) | `build` |
 | `updater.rs` | "Check for updates" flow (check → confirm dialog → install → restart) | `check` |
 | `links.rs` | Opening targets: Explorer select, external browser | `open_in_explorer`, `open_external` |
-| `logfile.rs` | Append log at `%APPDATA%\com.tofunuggets.app\tofu.log` (512 KB cap) | `log` |
+| `logfile.rs` | Append log in the per-user data dir (512 KB cap) | `log` |
+| `paths.rs` | Per-user data dir: Tauri's identifier dir on Windows, `~/Library/Application Support/Tofu Nuggets` on macOS (an identifier ending in `.app` reads as an app bundle to Finder) | `data_dir` |
 | `appstate.rs` | Shared pause flag | `Paused` |
 
 ## Code map — `app/ui/` (Vite package; `npm run build` BEFORE `cargo build`)
@@ -69,7 +70,7 @@
 | `.github/workflows/release.yml` | Tag `v*` → build+sign → draft release + `latest.json` |
 | `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests). macOS job also uploads an ad-hoc-signed arm64 `.dmg` artifact (14-day retention) for hardware testing |
 | `spikes/` | Historical go/no-go spikes (hover-detect GO; badge-reparent NO-GO) with findings in their READMEs |
-| `%APPDATA%\com.tofunuggets.app\` | settings.json, index.db, tofu.log (per-user runtime data) |
+| `%APPDATA%\com.tofunuggets.app\` (Windows) / `~/Library/Application Support/Tofu Nuggets/` (macOS) | settings.json, index.db, tofu.log (per-user runtime data; see `paths.rs`) |
 
 ## Events & commands (cross-window contracts)
 

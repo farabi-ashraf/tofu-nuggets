@@ -100,7 +100,32 @@
   no icon. **The dialog is the discriminator: if it appears, the handler runs and the
   AX walk is wrong (log has the chain); if nothing appears at all, the shortcut never
   fires and the next suspect is tauri-plugin-global-shortcut on macOS.**
-- macOS log path: `~/Library/Application Support/com.tofunuggets.app/tofu.log`.
+- macOS log path: `~/Library/Application Support/Tofu Nuggets/tofu.log` (renamed — see
+  the data-dir bug below).
+
+## macOS hover: WORKS as of the third Mini run (2026-07-21)
+
+Hotkey opens the editor, note saved, **hover panel appears over a desktop icon** —
+the tolerant AX walk (PR #17) was the fix. Three new bugs found in that run, all
+fixed in `wip-mac-hover-fixes`:
+
+1. **Panel drawn far left of the icon.** `desktop_mac` converted points→physical px
+   using `CGDisplayPixelsWide / CGDisplayBounds`; that ratio is NOT the window
+   backing scale on displays running a *scaled* resolution (can be 1.5 while backing
+   scale is 2.0). Fix: macOS keeps everything in POINTS end to end and the panel is
+   placed with `LogicalPosition`/`LogicalSize`; Windows stays physical-px +
+   `PhysicalPosition`. **Never reintroduce the conversion.**
+2. **App died a few seconds after the panel appeared.** The hover thread called
+   `show`/`hide`/`set_position` directly — legal on Win32, fatal on macOS, where all
+   AppKit window calls must be on the main thread. Fix: macOS marshals every panel
+   call through `run_on_main_thread`. Idle release (destroy+recreate the overlay) is
+   now Windows-only: it exists for WebView2's process tree, and WKWebView has no
+   equivalent cost.
+3. **Data folder unopenable** ("damaged or incomplete"): the identifier
+   `com.tofunuggets.app` makes `~/Library/Application Support/com.tofunuggets.app`
+   look like an app bundle to Finder, hiding the log. Fix: new `paths.rs` — macOS
+   uses `Tofu Nuggets`; **Windows keeps the identifier dir** (shipped installs store
+   settings/index there and would be stranded by a rename).
 - Still open once hover runs: retina rect alignment (panel offset ×2 = unit bug),
   hidden-extension name resolution, false hover triggers in Finder icon-view windows,
   macOS `selected_icon` + `list_icons` still stubs.
