@@ -121,8 +121,12 @@ opened or closed**, and ~1 s after the last window hid. So macOS terminates the 
 whenever it has **no VISIBLE window** — hidden windows do not count, `Accessory`
 policy does not change it, and the termination never raises `ExitRequested`.
 Fix in `wip-mac-panel-park`: the panel is **parked off-screen (still ordered in)**
-instead of hidden — `overlay::park`, used by startup, `hover::hide_panel` and the
-panel's ✕ command. **If the app still exits, the next step is overriding
+instead of hidden — `overlay::park`, used by startup, `hover::hide_panel`, the
+panel's ✕ command, **and `editor::open_editor`** (that last one was missed in the
+first pass: opening the editor hid the parked panel, so closing the editor left
+nothing visible — which is exactly why a *new* note quit the app while editing an
+existing one from the main window did not). **Rule: on macOS never call `hide()` on
+the panel; park it.** Parking verified good for startup, hover cycle and edit-note. **If the app still exits, the next step is overriding
 `applicationShouldTerminateAfterLastWindowClosed` on the NSApp delegate via objc2**
 (more invasive; only if parking fails, e.g. if AppKit constrains the parked window
 back on-screen). Confirmed working in that run: tray Quit, editor keyboard focus

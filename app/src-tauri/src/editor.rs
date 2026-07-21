@@ -196,8 +196,17 @@ pub fn open_for_path(app: &AppHandle, path: std::path::PathBuf) {
 }
 
 fn open_editor(app: &AppHandle, name: &str, path: std::path::PathBuf) {
-    // The quick-view panel would fight the editor visually.
+    // The quick-view panel would fight the editor visually. macOS parks it
+    // off-screen rather than hiding it: hiding leaves the editor as the only
+    // visible window, and closing that one then leaves none, which ends the
+    // process (see overlay::park). AppKit window calls also belong on the main
+    // thread, and this runs on the hotkey's worker thread.
     if let Some(win) = app.get_webview_window(overlay::LABEL) {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.run_on_main_thread(move || overlay::park(&win));
+        }
+        #[cfg(not(target_os = "macos"))]
         let _ = win.hide();
     }
 
