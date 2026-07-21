@@ -58,10 +58,12 @@ jobs:
         run: cargo test
         working-directory: app/src-tauri
 
-      # Sideloadable arm64 build for beta hardware testing (ad-hoc signed;
-      # first launch needs System Settings → Privacy & Security → "Open
-      # Anyway"). Updater artifacts are skipped: the signing key is a release
-      # secret and updater .dmgs are not what this artifact is for.
+      # Sideloadable arm64 build for beta hardware testing. Ad-hoc signing
+      # (bundle.macOS.signingIdentity "-") is mandatory, not cosmetic: an
+      # unsigned bundle plus the quarantine flag makes Apple silicon refuse
+      # to launch it as "damaged" — the Open Anyway path never appears.
+      # Updater artifacts are skipped: the signing key is a release secret and
+      # updater .dmgs are not what this artifact is for.
       - name: Build .dmg
         if: matrix.os == 'macos-latest'
         # beforeBuildCommand is cleared: the frontend is already built by the
@@ -72,9 +74,17 @@ jobs:
           --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
         working-directory: app/src-tauri
 
+      # Fail loudly if the bundle ships unsigned again — the previous build
+      # did, and the only symptom was a "damaged app" dialog on the tester's
+      # Mac.
+      - name: Verify bundle signature
+        if: matrix.os == 'macos-latest'
+        run: codesign --verify --strict --verbose=2 "target/release/bundle/macos/Tofu Nuggets.app"
+        working-directory: app/src-tauri
+
       - name: Upload .dmg artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: tofu-nuggets-macos-arm64-dmg
           path: app/src-tauri/target/release/bundle/dmg/*.dmg
