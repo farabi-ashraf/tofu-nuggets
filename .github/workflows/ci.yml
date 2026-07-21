@@ -74,12 +74,18 @@ jobs:
           --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
         working-directory: app/src-tauri
 
-      # Fail loudly if the bundle ships unsigned again — the previous build
-      # did, and the only symptom was a "damaged app" dialog on the tester's
-      # Mac.
-      - name: Verify bundle signature
+      # Fail loudly if the app ships unsigned again — an earlier build did,
+      # and the only symptom was a "damaged app" dialog on the tester's Mac.
+      # Checked inside the mounted .dmg because the dmg bundler deletes
+      # bundle/macos/*.app once it has packed it, and the dmg is what the
+      # tester actually installs.
+      - name: Verify signature inside .dmg
         if: matrix.os == 'macos-latest'
-        run: codesign --verify --strict --verbose=2 "target/release/bundle/macos/Tofu Nuggets.app"
+        run: |
+          dmg=$(ls target/release/bundle/dmg/*.dmg)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/tofu-dmg "$dmg"
+          codesign --verify --strict --verbose=2 "/tmp/tofu-dmg/Tofu Nuggets.app"
+          hdiutil detach /tmp/tofu-dmg
         working-directory: app/src-tauri
 
       - name: Upload .dmg artifact
