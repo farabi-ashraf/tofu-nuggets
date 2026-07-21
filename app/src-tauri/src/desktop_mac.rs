@@ -31,8 +31,11 @@
 //! the ApplicationServices umbrella framework, kept to the minimum this
 //! module actually calls.
 //!
-//! Not yet implemented (later Route 1 PRs): `selected_icon` (hotkey works
-//! via cursor position only), `list_icons` (badge layer is Windows-only).
+//! Two ways in, both landing on the same Finder icon container: the hit-test
+//! above (hover, hotkey-under-cursor) and, for `list_icons`/`selected_icon`,
+//! a walk down from Finder's application element — found through its pid in
+//! the CoreGraphics window list, since those must work with the pointer
+//! nowhere near an icon.
 
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -105,15 +108,29 @@ mod ffi {
             key_callbacks: *const c_void,
             value_callbacks: *const c_void,
         ) -> CFDictionaryRef;
+        pub fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
+        pub fn CFArrayGetCount(array: CFTypeRef) -> CFIndex;
+        pub fn CFArrayGetValueAtIndex(array: CFTypeRef, idx: CFIndex) -> CFTypeRef;
+        pub fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
+        pub fn CFNumberGetValue(
+            number: CFTypeRef,
+            the_type: CFIndex,
+            value: *mut c_void,
+        ) -> Boolean;
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         pub static kAXTrustedCheckOptionPrompt: CFStringRef;
 
+        pub static kCGWindowOwnerName: CFStringRef;
+        pub static kCGWindowOwnerPID: CFStringRef;
+
         pub fn AXIsProcessTrusted() -> Boolean;
         pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
         pub fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+        pub fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+        pub fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> CFTypeRef;
         pub fn AXUIElementCopyElementAtPosition(
             application: AXUIElementRef,
             x: f32,
@@ -178,13 +195,12 @@ fn copy_attr(elem: CFTypeRef, name: &str) -> Option<CfOwned> {
     CfOwned::new(out)
 }
 
-/// Read a CFString attribute into a Rust String.
-fn string_attr(elem: CFTypeRef, name: &str) -> Option<String> {
-    let val = copy_attr(elem, name)?;
+/// A CFString → Rust String.
+fn cf_string_value(s: CFTypeRef) -> Option<String> {
     let mut buf = [0u8; 1024];
     let ok = unsafe {
         CFStringGetCString(
-            val.0,
+            s,
             buf.as_mut_ptr(),
             buf.len() as CFIndex,
             kCFStringEncodingUTF8,
@@ -195,6 +211,11 @@ fn string_attr(elem: CFTypeRef, name: &str) -> Option<String> {
     }
     let end = buf.iter().position(|&b| b == 0)?;
     String::from_utf8(buf[..end].to_vec()).ok()
+}
+
+/// Read a CFString attribute into a Rust String.
+fn string_attr(elem: CFTypeRef, name: &str) -> Option<String> {
+    cf_string_value(copy_attr(elem, name)?.0)
 }
 
 /// Element frame in POINTS from its AXPosition + AXSize.
@@ -239,6 +260,105 @@ fn displays() -> Vec<CGRect> {
 /// How far up the AX tree to look for the desktop container. Finder nests the
 /// desktop a few levels deep and the exact depth is not contractual.
 const MAX_DEPTH: usize = 8;
+
+/// How far *down* from Finder's windows to hunt for the icon container.
+const SEARCH_DEPTH: usize = 3;
+
+/// Take our own reference to a CF object we only borrowed (array/dictionary
+/// members are owned by their container, so wrapping one in `CfOwned` without
+/// retaining it would over-release).
+fn retained(ptr: CFTypeRef) -> Option<CfOwned> {
+    if ptr.is_null() {
+        return None;
+    }
+    unsafe { CFRetain(ptr) };
+    CfOwned::new(ptr)
+}
+
+fn array_items(arr: CFTypeRef) -> Vec<CfOwned> {
+    let count = unsafe { CFArrayGetCount(arr) };
+    (0..count)
+        .filter_map(|i| retained(unsafe { CFArrayGetValueAtIndex(arr, i) }))
+        .collect()
+}
+
+/// Children of an AX element, empty when it has none or is not readable.
+fn children(elem: CFTypeRef) -> Vec<CfOwned> {
+    copy_attr(elem, "AXChildren")
+        .map(|kids| array_items(kids.0))
+        .unwrap_or_default()
+}
+
+/// Finder's process id, read from the window list — Finder always owns the
+/// desktop window. Not cached: Finder can be relaunched, and the callers here
+/// run at most once per hotkey press or badge refresh.
+fn finder_pid() -> Option<i32> {
+    // kCGWindowListOptionAll, kCGNullWindowID.
+    let list = CfOwned::new(unsafe { CGWindowListCopyWindowInfo(0, 0) })?;
+    for win in array_items(list.0) {
+        let owner = unsafe { CFDictionaryGetValue(win.0, kCGWindowOwnerName) };
+        if owner.is_null() || cf_string_value(owner).as_deref() != Some("Finder") {
+            continue;
+        }
+        let pid_ref = unsafe { CFDictionaryGetValue(win.0, kCGWindowOwnerPID) };
+        if pid_ref.is_null() {
+            continue;
+        }
+        let mut pid: i32 = 0;
+        // kCFNumberSInt32Type
+        let ok = unsafe { CFNumberGetValue(pid_ref, 3, &mut pid as *mut _ as *mut c_void) };
+        if ok != 0 && pid > 0 {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// The desktop's icon container: a scroll area inside a Finder window that
+/// spans a display. Same shape the hover hit-test lands in, approached from
+/// the application element instead of from a screen point — which is what
+/// lets enumeration work without the pointer being over an icon.
+fn desktop_scroll_area() -> Option<CfOwned> {
+    let app = CfOwned::new(unsafe { AXUIElementCreateApplication(finder_pid()?) })?;
+    for win in children(app.0) {
+        if !covers_a_display(win.0) {
+            continue;
+        }
+        if let Some(sa) = find_scroll_area(win.0, SEARCH_DEPTH) {
+            return Some(sa);
+        }
+    }
+    None
+}
+
+fn find_scroll_area(elem: CFTypeRef, depth: usize) -> Option<CfOwned> {
+    if string_attr(elem, "AXRole").as_deref() == Some("AXScrollArea") {
+        return retained(elem);
+    }
+    if depth == 0 {
+        return None;
+    }
+    children(elem)
+        .into_iter()
+        .find_map(|kid| find_scroll_area(kid.0, depth - 1))
+}
+
+/// An icon element → `Icon`. Items without a name are skipped: they are the
+/// container's own scrollbars and decorations, not desktop items.
+fn icon_from(elem: CFTypeRef, dirs: &[PathBuf]) -> Option<Icon> {
+    let name = element_name(elem)?;
+    let f = frame_pts(elem)?;
+    Some(Icon {
+        rect: IconRect {
+            left: f.origin.x.round() as i32,
+            top: f.origin.y.round() as i32,
+            right: (f.origin.x + f.size.width).round() as i32,
+            bottom: (f.origin.y + f.size.height).round() as i32,
+        },
+        path: resolve_path(&name, dirs),
+        name,
+    })
+}
 
 /// The hit element plus its ancestors, nearest first.
 fn ancestor_chain(elem: CFTypeRef) -> Vec<CfOwned> {
@@ -337,7 +457,42 @@ pub fn debug_cursor_chain() -> Option<String> {
     for (i, node) in ancestor_chain(elem.0).iter().enumerate() {
         out.push_str(&format!("\n  {}: {}", i + 1, describe(node.0)));
     }
+    out.push_str(&format!("\n{}", debug_finder_tree()));
     Some(out)
+}
+
+/// Finder's window/container shape, for when enumeration comes back empty.
+/// The hover hit-test needed two hardware rounds to match Finder's real
+/// structure; this exists so enumeration needs fewer.
+fn debug_finder_tree() -> String {
+    let Some(pid) = finder_pid() else {
+        return "Finder tree: process not found in window list".into();
+    };
+    let Some(app) = CfOwned::new(unsafe { AXUIElementCreateApplication(pid) }) else {
+        return format!("Finder tree: no AX element for pid {pid}");
+    };
+    let mut out = format!("Finder tree (pid {pid}):");
+    for (i, win) in children(app.0).iter().enumerate() {
+        let role = string_attr(win.0, "AXRole").unwrap_or_else(|| "?".into());
+        let title = string_attr(win.0, "AXTitle").unwrap_or_else(|| "-".into());
+        let spans = covers_a_display(win.0);
+        let kids = children(win.0)
+            .iter()
+            .map(|k| string_attr(k.0, "AXRole").unwrap_or_else(|| "?".into()))
+            .collect::<Vec<_>>()
+            .join(",");
+        out.push_str(&format!(
+            "\n  win {i}: {role} \"{title}\" spans-display={spans} children=[{kids}]"
+        ));
+    }
+    match desktop_scroll_area() {
+        Some(sa) => out.push_str(&format!(
+            "\n  container found, {} children",
+            children(sa.0).len()
+        )),
+        None => out.push_str("\n  container NOT found"),
+    }
+    out
 }
 
 impl DesktopIcons for MacIcons {
@@ -376,16 +531,20 @@ impl DesktopIcons for MacIcons {
         Some(Icon { name, rect, path })
     }
 
-    /// Badge layer is Windows-only for now; implemented with the macOS badge
-    /// equivalent (Route 1).
     fn list_icons(&self) -> Result<Vec<Icon>, String> {
-        Ok(Vec::new())
+        let sa = desktop_scroll_area().ok_or("desktop icon container not found")?;
+        Ok(children(sa.0)
+            .into_iter()
+            .filter_map(|kid| icon_from(kid.0, &self.dirs))
+            .collect())
     }
 
-    /// Not implemented yet: the hotkey falls back to this only when the
-    /// cursor is not over an icon; cursor targeting already works.
     fn selected_icon(&self) -> Option<Icon> {
-        None
+        let sa = desktop_scroll_area()?;
+        let selected = copy_attr(sa.0, "AXSelectedChildren")?;
+        array_items(selected.0)
+            .into_iter()
+            .find_map(|kid| icon_from(kid.0, &self.dirs))
     }
 }
 

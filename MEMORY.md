@@ -117,6 +117,23 @@ Mini. Follow-ups from that run:
   would pull every mounted disk into the index scan.
 - Still open from earlier: deleted note reappearing after reinstall (needs a repro:
   does the sidecar survive in `~/Desktop/.nuggets/`?).
+- Link fix verified on BOTH platforms (2026-07-21), PR #22.
+
+## Route 1 leftovers (in progress)
+
+1. **Icon enumeration** (`wip-mac-icon-enumeration`, current): macOS `list_icons` +
+   `selected_icon` implemented by walking down from Finder's application element —
+   pid comes from `CGWindowListCopyWindowInfo` (also the API the future macOS badge
+   occlusion pass needs), then the first `AXScrollArea` inside a display-spanning
+   Finder window, whose children are the icons. Same container the hit-test lands in,
+   reached without the pointer. `debug_finder_tree()` logs Finder's window/children
+   shape when the container is not found, appended to the cursor-chain dump —
+   **structure is a guess again, so expect the log to correct it.** Unblocks badges.
+2. **macOS badge layer**: needs `list_icons` (above) + a click-through always-on-top
+   window + occlusion via `CGWindowListCopyWindowInfo` (Windows uses GDI + WinEvent
+   hooks; none of that ports).
+3. **Release workflow macOS entry**: tag → signed dmg on the GitHub release, so
+   testers stop downloading CI artifacts. Needs a version bump decision (0.3.0).
 
 ## macOS hover: WORKS as of the third Mini run (2026-07-21)
 
