@@ -131,6 +131,14 @@ Mini. Follow-ups from that run:
    `AXScrollArea`/`AXWindow`/`AXApplication` roles **and anything display-sized**
    (icons never are), applied in both `icon_at` and `icon_from`.
 
+0b. **Finder's real AX shape (macOS 26, from the hardware dump — no longer a guess)**:
+   `AXApplication "Finder"` → `AXScrollArea "desktop"` (display-sized, **directly
+   among the app's children, not inside an AXWindow**) → `AXGroup "Desktop"` (also
+   display-sized) → the icon elements. First enumeration attempt stopped at the
+   scroll area and enumerated its single AXGroup child ⇒ zero icons ("container
+   found, 1 children" in the log). Now the walk descends through display-sized
+   containers until it finds item-shaped children, so the depth is not hard-coded.
+
 1. **Icon enumeration** (`wip-mac-icon-enumeration`, current): macOS `list_icons` +
    `selected_icon` implemented by walking down from Finder's application element —
    pid comes from `CGWindowListCopyWindowInfo` (also the API the future macOS badge

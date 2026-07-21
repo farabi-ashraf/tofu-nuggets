@@ -36,6 +36,21 @@
 //! a walk down from Finder's application element — found through its pid in
 //! the CoreGraphics window list, since those must work with the pointer
 //! nowhere near an icon.
+//!
+//! Shape observed on macOS 26 (from a hardware AX dump, not documentation):
+//!
+//! ```text
+//! AXApplication "Finder"
+//!   └ AXScrollArea "desktop"   display-sized, sits directly among the app's
+//!     └ AXGroup "Desktop"      children — NOT inside an AXWindow
+//!       └ the icon elements    also display-sized
+//! ```
+//!
+//! Both wrappers answer to a name and a frame, so they look like icons unless
+//! rejected (`is_container`) — an earlier version reported a phantom "Desktop"
+//! icon for bare wallpaper, which also stopped the hotkey ever falling back to
+//! the selection. Depths are not hard-coded: the walk descends through
+//! display-sized containers until it finds item-shaped children.
 
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -314,33 +329,35 @@ fn finder_pid() -> Option<i32> {
     None
 }
 
-/// The desktop's icon container: a scroll area inside a Finder window that
-/// spans a display. Same shape the hover hit-test lands in, approached from
-/// the application element instead of from a screen point — which is what
-/// lets enumeration work without the pointer being over an icon.
-fn desktop_scroll_area() -> Option<CfOwned> {
+/// The element whose children are the desktop icons.
+///
+/// Observed shape on macOS 26 (hardware, see the module header): the icons sit
+/// two levels below Finder's application element, and an earlier version that
+/// stopped at the `AXScrollArea` enumerated its single `AXGroup` child instead
+/// of any icons. Rather than hard-code that depth, descend through
+/// display-sized containers until reaching the element that actually holds
+/// item-shaped children — which survives Finder rearranging its tree again.
+fn desktop_icon_container() -> Option<CfOwned> {
     let app = CfOwned::new(unsafe { AXUIElementCreateApplication(finder_pid()?) })?;
-    for win in children(app.0) {
-        if !covers_a_display(win.0) {
-            continue;
-        }
-        if let Some(sa) = find_scroll_area(win.0, SEARCH_DEPTH) {
-            return Some(sa);
-        }
-    }
-    None
+    children(app.0)
+        .into_iter()
+        .filter(|top| covers_a_display(top.0))
+        .find_map(|top| find_icon_container(top.0, SEARCH_DEPTH))
 }
 
-fn find_scroll_area(elem: CFTypeRef, depth: usize) -> Option<CfOwned> {
-    if string_attr(elem, "AXRole").as_deref() == Some("AXScrollArea") {
+fn find_icon_container(elem: CFTypeRef, depth: usize) -> Option<CfOwned> {
+    let kids = children(elem);
+    if kids
+        .iter()
+        .any(|k| !is_container(k.0) && element_name(k.0).is_some())
+    {
         return retained(elem);
     }
     if depth == 0 {
         return None;
     }
-    children(elem)
-        .into_iter()
-        .find_map(|kid| find_scroll_area(kid.0, depth - 1))
+    kids.into_iter()
+        .find_map(|k| find_icon_container(k.0, depth - 1))
 }
 
 /// Is this the desktop itself rather than an item on it?
@@ -501,11 +518,25 @@ fn debug_finder_tree() -> String {
             "\n  win {i}: {role} \"{title}\" spans-display={spans} children=[{kids}]"
         ));
     }
-    match desktop_scroll_area() {
-        Some(sa) => out.push_str(&format!(
-            "\n  container found, {} children",
-            children(sa.0).len()
-        )),
+    match desktop_icon_container() {
+        Some(container) => {
+            let kids = children(container.0);
+            out.push_str(&format!(
+                "\n  container: {} \"{}\" with {} children",
+                string_attr(container.0, "AXRole").unwrap_or_else(|| "?".into()),
+                string_attr(container.0, "AXTitle").unwrap_or_else(|| "-".into()),
+                kids.len()
+            ));
+            // First few children decide whether enumeration sees real icons.
+            for kid in kids.iter().take(3) {
+                out.push_str(&format!(
+                    "\n    child: {} \"{}\" container={}",
+                    string_attr(kid.0, "AXRole").unwrap_or_else(|| "?".into()),
+                    element_name(kid.0).unwrap_or_else(|| "-".into()),
+                    is_container(kid.0)
+                ));
+            }
+        }
         None => out.push_str("\n  container NOT found"),
     }
     out
@@ -548,19 +579,27 @@ impl DesktopIcons for MacIcons {
     }
 
     fn list_icons(&self) -> Result<Vec<Icon>, String> {
-        let sa = desktop_scroll_area().ok_or("desktop icon container not found")?;
-        Ok(children(sa.0)
+        let container = desktop_icon_container().ok_or("desktop icon container not found")?;
+        Ok(children(container.0)
             .into_iter()
             .filter_map(|kid| icon_from(kid.0, &self.dirs))
             .collect())
     }
 
     fn selected_icon(&self) -> Option<Icon> {
-        let sa = desktop_scroll_area()?;
-        let selected = copy_attr(sa.0, "AXSelectedChildren")?;
-        array_items(selected.0)
+        let container = desktop_icon_container()?;
+        // Which element answers AXSelectedChildren is not contractual — the
+        // group holding the icons or the scroll area above it — so ask both.
+        let parent = copy_attr(container.0, "AXParent");
+        [Some(&container), parent.as_ref()]
             .into_iter()
-            .find_map(|kid| icon_from(kid.0, &self.dirs))
+            .flatten()
+            .find_map(|elem| {
+                let selected = copy_attr(elem.0, "AXSelectedChildren")?;
+                array_items(selected.0)
+                    .into_iter()
+                    .find_map(|kid| icon_from(kid.0, &self.dirs))
+            })
     }
 }
 
