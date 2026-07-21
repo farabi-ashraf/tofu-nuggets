@@ -4,6 +4,7 @@
 // theme.js) updates live.
 
 import "./theme.js";
+import { hotkeyFromEvent, prettyHotkey, IS_MAC } from "./hotkeys.js";
 
 const { invoke } = window.__TAURI__.core;
 
@@ -16,7 +17,13 @@ const reducedMotion = document.getElementById("reduced-motion");
 const highContrast = document.getElementById("high-contrast");
 const hotkeyEl = document.getElementById("hotkey");
 const hotkeyMsg = document.getElementById("hotkey-msg");
-const HOTKEY_HINT = hotkeyMsg.textContent;
+// macOS names its modifiers differently, and Command combinations are mostly
+// already owned by the system or Finder (⌘⇧N makes a new folder), so steer
+// towards Control/Option there.
+const HOTKEY_HINT = IS_MAC
+  ? "Use ⌃ Control or ⌥ Option plus a letter, digit, or F-key. Most ⌘ combinations are already taken by macOS."
+  : hotkeyMsg.textContent;
+hotkeyMsg.textContent = HOTKEY_HINT;
 
 let settings = null;
 
@@ -32,7 +39,9 @@ function reflect() {
   badges.checked = settings.badges;
   reducedMotion.checked = settings.reduced_motion;
   highContrast.checked = settings.high_contrast;
-  if (!hotkeyEl.classList.contains("capturing")) hotkeyEl.value = settings.hotkey;
+  if (!hotkeyEl.classList.contains("capturing")) {
+    hotkeyEl.value = prettyHotkey(settings.hotkey);
+  }
 }
 
 async function commit() {
@@ -86,25 +95,8 @@ highContrast.addEventListener("change", () => {
   commit();
 });
 
-// --- Hotkey capture: click the field, press a combination. Needs Ctrl, Alt,
-// or Win plus a normal key so it stays a sane global shortcut. Esc cancels.
-function hotkeyFromEvent(e) {
-  const k = e.key.toLowerCase();
-  if (["control", "shift", "alt", "meta"].includes(k)) return null; // modifier alone
-  if (!(e.ctrlKey || e.altKey || e.metaKey)) return null;
-  let key = null;
-  if (/^[a-z0-9]$/.test(k)) key = k;
-  else if (/^f([1-9]|1[0-2])$/.test(k)) key = k;
-  else if (k === " ") key = "space";
-  if (!key) return null;
-  const mods = [];
-  if (e.ctrlKey) mods.push("ctrl");
-  if (e.altKey) mods.push("alt");
-  if (e.metaKey) mods.push("super");
-  if (e.shiftKey) mods.push("shift");
-  return [...mods, key].join("+");
-}
-
+// --- Hotkey capture: click the field, press a combination (see hotkeys.js for
+// the capture rules). Esc cancels.
 hotkeyEl.addEventListener("focus", () => {
   hotkeyEl.classList.add("capturing");
   hotkeyEl.value = "press keys…";
@@ -113,7 +105,7 @@ hotkeyEl.addEventListener("focus", () => {
 
 hotkeyEl.addEventListener("blur", () => {
   hotkeyEl.classList.remove("capturing");
-  hotkeyEl.value = settings ? settings.hotkey : "";
+  hotkeyEl.value = settings ? prettyHotkey(settings.hotkey) : "";
 });
 
 hotkeyEl.addEventListener("keydown", (e) => {
@@ -129,6 +121,41 @@ hotkeyEl.addEventListener("keydown", (e) => {
   hotkeyEl.blur();
   commit();
 });
+
+// --- Accessibility permission (macOS). Without it the AX lookups behind
+// hover and hotkey targeting all fail, which otherwise looks like the app
+// being broken. `null` means the platform needs no grant (Windows) and the
+// whole section stays hidden.
+const accessGroup = document.getElementById("access-group");
+const accessMsg = document.getElementById("access-msg");
+const accessOpen = document.getElementById("access-open");
+
+async function refreshAccess() {
+  let granted = null;
+  try {
+    granted = await invoke("accessibility_status");
+  } catch {
+    return;
+  }
+  if (granted === null) return;
+  accessGroup.hidden = false;
+  accessOpen.hidden = granted;
+  accessMsg.textContent = granted
+    ? "Granted — hover and the note hotkey can find desktop icons."
+    : "Not granted. Hover and the note hotkey cannot find desktop icons until " +
+      "you allow Tofu Nuggets under Privacy & Security → Accessibility, then " +
+      "quit and reopen the app. Beta builds are signed per build, so each new " +
+      "build has to be allowed again.";
+}
+
+accessOpen.addEventListener("click", () => {
+  invoke("open_accessibility_pane").catch(() => {});
+});
+
+// The grant happens outside the app, so re-check whenever this window is
+// looked at again rather than only on load.
+refreshAccess();
+window.addEventListener("focus", refreshAccess);
 
 // --- Danger zone: delete all notes. Two-step confirm (arm -> "Sure?", 3 s
 // disarm) mirroring the per-row delete in the main window, since this wipes

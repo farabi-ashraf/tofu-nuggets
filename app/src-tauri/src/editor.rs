@@ -109,6 +109,11 @@ pub fn open_for_target(app: &AppHandle) {
 
     let Some(icon) = target else {
         crate::logfile::log(app, "editor: no desktop icon under cursor or selected");
+        // Missing Accessibility permission makes every lookup fail, so the
+        // hotkey would look dead with no explanation anywhere but the log.
+        if icons::accessibility_trusted() == Some(false) {
+            warn_accessibility(app);
+        }
         return;
     };
     let Some(path) = icon.path.clone() else {
@@ -123,6 +128,36 @@ pub fn open_for_target(app: &AppHandle) {
     };
     crate::logfile::log(app, &format!("editor: opening for '{}'", icon.name));
     open_editor(app, &icon.name, path);
+}
+
+/// Tell the user the hotkey cannot find icons without the Accessibility grant,
+/// and offer to open the pane where it is given. Rate-limited to one dialog
+/// per run so repeated hotkey presses do not stack windows.
+fn warn_accessibility(app: &AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    let app2 = app.clone();
+    app.dialog()
+        .message(
+            "Tofu Nuggets needs the Accessibility permission to find the icon \
+             under your cursor.\n\nGrant it in System Settings → Privacy & \
+             Security → Accessibility, then quit and reopen the app.",
+        )
+        .title("Accessibility permission required")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Open Settings".into(),
+            "Later".into(),
+        ))
+        .show(move |open| {
+            if open {
+                crate::icons::open_accessibility_settings();
+            }
+            let _ = &app2;
+        });
 }
 
 /// Open the editor for an explicit path (from the main window list).

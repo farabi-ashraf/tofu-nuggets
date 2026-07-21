@@ -68,12 +68,27 @@
   unzip strips the signature) — transfer the `.dmg`.
 - `actions/upload-artifact`: v5 AND v4 declare `using: node20` upstream → deprecation
   warning regardless of our config; **v7.0.1 is node24** (v6 = Dec 2025, v7 = Feb 2026).
-- **NEXT: owner tests AX hover on Mini (planned 2026-07-22, work hours)** — sideload
-  steps in PR #13 body; checklist in PR #12 body: Accessibility prompt → grant +
-  relaunch → hotkey note on desktop file → hover. Watch: retina rect alignment
-  (panel offset ×2 = unit bug), hidden-extension name resolution, false hover
-  triggers in open Finder icon-view windows. Result decides next PR (AX fixes vs
-  overlay polish/badges).
+- **First Mini test run (owner, 2026-07-21, macOS 26)**: signed build installs and
+  opens after "Open Anyway"; main window + settings work. **Hover and hotkey both
+  dead — no note could be created, so hover itself is still UNTESTED.** Hotkey
+  findings: many combinations could not be captured at all; ⌘ combinations rejected
+  or already owned (⌘⇧N = Finder New Folder); Option+Z stored as `super+z` and shown
+  as "Win+Z"; newly set hotkeys never fired.
+- **Diagnosis + fix PR** (`wip-mac-hotkey-ux`): (1) capture read `event.key`, but
+  macOS composes Option+letter into a character ("Ω") so most combinations were
+  silently rejected → now `event.code`; (2) modifier labels were Windows-only
+  (`super`→"Win") → per-platform labels ⌘⌥⌃⇧ in new shared `app/ui/hotkeys.js`;
+  (3) **the real blocker: with the Accessibility grant missing, every AX call fails,
+  so hover finds nothing AND the hotkey's `icon_at` finds nothing — and macOS
+  `selected_icon` is still a stub, so the fallback path is dead too. The app said
+  nothing** → Settings now shows a permission section (status + "Open Accessibility
+  settings"), and the hotkey shows a one-time dialog when the grant is missing.
+- **Still unknown, next test decides**: whether the AX permission was ever granted
+  on the Mini, and whether the AX hover heuristic actually matches Finder's desktop.
+  Watch: retina rect alignment (panel offset ×2 = unit bug), hidden-extension name
+  resolution, false hover triggers in open Finder icon-view windows.
+- Ad-hoc signing means macOS keys the Accessibility grant to each build's signature:
+  **every new CI build must be granted again** (stale entries accumulate in the list).
 - Remaining Route 1 work after AX hover verified on Mini: macOS overlay/panel look,
   badge equivalent (needs list_icons via Finder AX tree), selected_icon, hotkey/tray/
   updater verification, release.yml macOS matrix + Gatekeeper docs at mac launch.

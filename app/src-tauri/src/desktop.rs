@@ -223,6 +223,14 @@ pub fn desktop_dirs() -> Vec<PathBuf> {
 
 use crate::icons::resolve_path;
 
+/// UIA needs no permission grant on Windows: `None` means "not applicable",
+/// which the settings UI renders as no accessibility row at all.
+pub fn accessibility_trusted() -> Option<bool> {
+    None
+}
+
+pub fn open_accessibility_settings() {}
+
 pub fn init_com_for_thread() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);

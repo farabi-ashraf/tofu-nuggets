@@ -45,6 +45,14 @@
       <p class="hint" id="hotkey-msg">Use Ctrl or Alt plus a letter, digit, or F-key.</p>
     </section>
 
+    <!-- macOS only: filled in by settings.js when the platform reports an
+         accessibility state. Hidden entirely on Windows. -->
+    <section class="group" id="access-group" hidden>
+      <h2>Accessibility permission</h2>
+      <p class="hint" id="access-msg"></p>
+      <button id="access-open" class="danger-btn" hidden>Open Accessibility settings…</button>
+    </section>
+
     <section class="group toggles">
       <label class="toggle">
         <input type="checkbox" id="badges" />

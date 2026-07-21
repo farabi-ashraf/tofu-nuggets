@@ -88,6 +88,8 @@ fn main() {
         .manage(Paused::default())
         .invoke_handler(tauri::generate_handler![
             hover::get_current_nugget,
+            icons::accessibility_status,
+            icons::open_accessibility_pane,
             editor::get_current_edit,
             editor::save_nugget,
             editor::delete_nugget,

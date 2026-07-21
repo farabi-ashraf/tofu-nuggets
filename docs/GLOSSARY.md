@@ -30,7 +30,7 @@
 |---|---|---|
 | `main.rs` | App wiring: plugins, managed state, command registry, startup (WebView2 guard, index rebuild, watcher, hotkey, hover, badges, tray) | `main`, `webview_missing_alert` |
 | `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
-| `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …) | `DesktopIcons`, `new_icons`, `resolve_path` |
+| `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …); accessibility-permission commands (`None` = platform needs no grant) | `DesktopIcons`, `new_icons`, `resolve_path`, `accessibility_status`, `open_accessibility_pane` |
 | `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection, display-name→path resolution, desktop roots, infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
 | `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX-API hit-test hover (hand-declared FFI, points↔pixels conversion, Accessibility-permission prompt). `selected_icon`/`list_icons` still stubs (badges Windows-only) | `MacIcons` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
@@ -56,6 +56,7 @@
 | `editor.html/js/css` | TipTap editor, toolbar, link insertion/normalization, drag-drop of files/folders → `nugget://` links (Tauri drag-drop event, portable) |
 | `main.html/js/css` | All-nuggets list, filter, row actions, hotkey hint, data-lifecycle footer |
 | `settings.html/js/css` | Settings controls, hotkey capture, danger zone (delete all) |
+| `hotkeys.js` | Hotkey capture (`event.code`, not `event.key` — Option+letter composes characters on macOS) + per-platform modifier labels (⌘⌥⌃⇧ vs Ctrl/Alt/Win); shared by settings capture and main-window hint |
 | `theme.js` | Single applier of font-scale/panel-scale/theme/motion/contrast to `<html>`; imported by every entry |
 
 ## Other locations
