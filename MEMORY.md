@@ -115,7 +115,20 @@ fixed in `wip-mac-hover-fixes`:
    scale is 2.0). Fix: macOS keeps everything in POINTS end to end and the panel is
    placed with `LogicalPosition`/`LogicalSize`; Windows stays physical-px +
    `PhysicalPosition`. **Never reintroduce the conversion.**
-**ROOT CAUSE FOUND (fifth Mini run, log from PR #19 build)**: the log ends
+**REAL ROOT CAUSE (sixth Mini run, log from PR #20 build)**: `prevent_close` + hide
+did NOT stop it. Log shows `exiting` ~6 s after a launch where **no window was ever
+opened or closed**, and ~1 s after the last window hid. So macOS terminates the app
+whenever it has **no VISIBLE window** — hidden windows do not count, `Accessory`
+policy does not change it, and the termination never raises `ExitRequested`.
+Fix in `wip-mac-panel-park`: the panel is **parked off-screen (still ordered in)**
+instead of hidden — `overlay::park`, used by startup, `hover::hide_panel` and the
+panel's ✕ command. **If the app still exits, the next step is overriding
+`applicationShouldTerminateAfterLastWindowClosed` on the NSApp delegate via objc2**
+(more invasive; only if parking fails, e.g. if AppKit constrains the parked window
+back on-screen). Confirmed working in that run: tray Quit, editor keyboard focus
+under Accessory policy, all cosmetic wording.
+
+**Earlier (fifth Mini run, log from PR #19 build)**: the log ends
 `window 'main' destroyed` → `exiting` with **no `exit requested` line**, so
 `RunEvent::Exit` arrives without `ExitRequested` — macOS terminates the app when its
 last *visible* window closes, and that path never consults `prevent_exit` (the

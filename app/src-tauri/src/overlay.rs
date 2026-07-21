@@ -11,8 +11,28 @@ pub const LABEL: &str = "overlay";
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window(LABEL) {
+        // Same reason as `park`: hiding the only visible window ends the
+        // process on macOS.
+        #[cfg(target_os = "macos")]
+        park(&win);
+        #[cfg(not(target_os = "macos"))]
         let _ = win.hide();
     }
+}
+
+/// Park the panel just outside every display, still ordered in.
+///
+/// macOS ends the process whenever it has no *visible* window — the log showed
+/// it exiting seconds after launch with nothing ever opened, and again a second
+/// after the last window hid — and hidden windows do not count. The panel is
+/// transparent, never-focusable and click-through-by-absence out here, so
+/// keeping it parked costs nothing and gives AppKit a window to see. `hide()`
+/// is therefore never used for the panel on macOS.
+#[cfg(target_os = "macos")]
+pub fn park(win: &WebviewWindow) {
+    let x = crate::icons::virtual_screen_width().saturating_add(100);
+    let _ = win.set_position(tauri::LogicalPosition::new(f64::from(x), 0.0));
+    let _ = win.show();
 }
 
 pub fn get_or_create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
