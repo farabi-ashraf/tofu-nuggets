@@ -115,6 +115,18 @@ fixed in `wip-mac-hover-fixes`:
    scale is 2.0). Fix: macOS keeps everything in POINTS end to end and the panel is
    placed with `LogicalPosition`/`LogicalSize`; Windows stays physical-px +
    `PhysicalPosition`. **Never reintroduce the conversion.**
+**ROOT CAUSE FOUND (fifth Mini run, log from PR #19 build)**: the log ends
+`window 'main' destroyed` → `exiting` with **no `exit requested` line**, so
+`RunEvent::Exit` arrives without `ExitRequested` — macOS terminates the app when its
+last *visible* window closes, and that path never consults `prevent_exit` (the
+Accessory policy did not change it). Fix in `wip-mac-window-close`: on macOS
+`CloseRequested` → `api.prevent_close()` + `win.hide()`, so windows are only ever
+hidden. Matches Mac convention (closing a window ≠ quitting) and windows are reused
+on next open (`mainwin::show`/`editor::get_or_create` already show existing windows).
+Same PR: tray label "Start with Windows" → "Open at Login" on macOS; row action
+tooltip → "Reveal in Finder"; main-window footer wording per platform (moved into
+`main.js`).
+
 **Fourth Mini run (2026-07-21, after PR #18)**: placement fixed — panel now appears
 beside the icon. **Process still dies after the panel hides, BUT only when no other
 app window is open** (main list or settings window open ⇒ survives). That rules the

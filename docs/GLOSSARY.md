@@ -80,6 +80,18 @@
 | `settings:changed` | emit → all windows | Full `Settings` payload; `theme.js` + windows re-apply live. |
 | `nugget:show` | emit → overlay | Panel payload; fresh pages pull via `get_current_nugget` instead (emit can beat page load). |
 
+## Platform behavior differences
+
+- **macOS windows hide on close, never destroy** (`main.rs` run handler): AppKit
+  terminates an app after its last visible window closes, and that path skips
+  `ExitRequested`, so `prevent_exit` cannot hold it. Also the platform convention.
+- **Idle release is Windows-only**: it reclaims WebView2's process tree; WKWebView has
+  no equivalent cost and per-hover AppKit window recreation is a needless risk.
+- **Activation policy**: macOS runs as `Accessory` (menu-bar agent, no Dock icon).
+- Per-platform wording lives next to the code that shows it: tray autostart label
+  (`tray.rs`), file-manager + app-removal wording (`main.js`), modifier labels
+  (`hotkeys.js`).
+
 ## Known behavior gaps (candidates, not bugs-by-surprise)
 
 - Watcher rename/move updates the index but doesn't emit `nuggets:changed` → open main window shows stale name until reopened.
