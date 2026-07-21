@@ -133,7 +133,6 @@ mod ffi {
             display_count: *mut u32,
         ) -> CGError;
         pub fn CGDisplayBounds(display: CGDirectDisplayID) -> CGRect;
-        pub fn CGDisplayPixelsWide(display: CGDirectDisplayID) -> usize;
         pub fn CGEventCreate(source: *const c_void) -> CFTypeRef;
         pub fn CGEventGetLocation(event: CFTypeRef) -> CGPoint;
     }
@@ -222,8 +221,9 @@ fn frame_pts(elem: CFTypeRef) -> Option<CGRect> {
     Some(CGRect { origin, size })
 }
 
-/// Active displays as (bounds in points, backing scale).
-fn displays() -> Vec<(CGRect, f64)> {
+/// Active display bounds, in points. No pixel dimensions are read anywhere in
+/// this module on purpose — see the units note in the module header.
+fn displays() -> Vec<CGRect> {
     let mut ids = [0 as CGDirectDisplayID; 16];
     let mut count = 0u32;
     let err = unsafe { CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) };
@@ -232,31 +232,8 @@ fn displays() -> Vec<(CGRect, f64)> {
     }
     ids[..count as usize]
         .iter()
-        .map(|&id| {
-            let bounds = unsafe { CGDisplayBounds(id) };
-            let px_wide = unsafe { CGDisplayPixelsWide(id) } as f64;
-            let scale = if bounds.size.width > 0.0 {
-                px_wide / bounds.size.width
-            } else {
-                1.0
-            };
-            (bounds, scale)
-        })
+        .map(|&id| unsafe { CGDisplayBounds(id) })
         .collect()
-}
-
-/// Backing scale of the display containing the point; 1.0 when unknown.
-fn scale_at_pts(x: f64, y: f64) -> f64 {
-    for (b, scale) in displays() {
-        if x >= b.origin.x
-            && x < b.origin.x + b.size.width
-            && y >= b.origin.y
-            && y < b.origin.y + b.size.height
-        {
-            return scale;
-        }
-    }
-    1.0
 }
 
 /// How far up the AX tree to look for the desktop container. Finder nests the
@@ -300,7 +277,7 @@ fn covers_a_display(win: CFTypeRef) -> bool {
     let area = f.size.width * f.size.height;
     displays()
         .iter()
-        .any(|(b, _)| area >= 0.8 * (b.size.width * b.size.height))
+        .any(|b| area >= 0.8 * (b.size.width * b.size.height))
 }
 
 /// Is this hit inside the desktop's icon container? Requires an `AXScrollArea`
@@ -458,7 +435,7 @@ pub fn cursor_pos() -> Option<(i32, i32)> {
 pub fn virtual_screen_width() -> i32 {
     displays()
         .iter()
-        .map(|(b, _)| (b.origin.x + b.size.width).round() as i32)
+        .map(|b| (b.origin.x + b.size.width).round() as i32)
         .max()
         .unwrap_or(i32::MAX)
 }
