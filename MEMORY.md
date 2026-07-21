@@ -83,10 +83,27 @@
   `selected_icon` is still a stub, so the fallback path is dead too. The app said
   nothing** → Settings now shows a permission section (status + "Open Accessibility
   settings"), and the hotkey shows a one-time dialog when the grant is missing.
-- **Still unknown, next test decides**: whether the AX permission was ever granted
-  on the Mini, and whether the AX hover heuristic actually matches Finder's desktop.
-  Watch: retina rect alignment (panel offset ×2 = unit bug), hidden-extension name
-  resolution, false hover triggers in open Finder icon-view windows.
+- **Second Mini run (owner, 2026-07-21, after PR #16)**: permission granted and shown
+  as granted; hotkey capture/labels now correct and register fine; **still no editor
+  opens on hotkey press**, so hover remains untested. Rules out: permissions, hotkey
+  capture, hotkey registration. Also rules out off-main-thread window creation
+  (main window + settings open from worker threads on macOS just fine).
+- **Remaining suspects, in order**: (1) the AX hit-test finds nothing — the first
+  heuristic demanded `AXImage` inside `AXScrollArea` inside an exactly-display-sized
+  window, and Finder on macOS 26 evidently does not present that; (2) the global
+  shortcut handler never fires at all.
+- **Diagnosis PR** (`wip-mac-ax-diag`): tolerant AX walk (ancestor chain up to 8
+  levels, any `AXScrollArea` ancestor, window must cover ≥80% of a display, missing
+  `AXWindow` accepted, name from AXTitle/AXFilename/AXDescription/AXValue on the item
+  levels only) + **`debug_cursor_chain()` dumps roles/subroles/names/frames to
+  tofu.log when targeting fails** + a one-time dialog when the hotkey fires but finds
+  no icon. **The dialog is the discriminator: if it appears, the handler runs and the
+  AX walk is wrong (log has the chain); if nothing appears at all, the shortcut never
+  fires and the next suspect is tauri-plugin-global-shortcut on macOS.**
+- macOS log path: `~/Library/Application Support/com.tofunuggets.app/tofu.log`.
+- Still open once hover runs: retina rect alignment (panel offset ×2 = unit bug),
+  hidden-extension name resolution, false hover triggers in Finder icon-view windows,
+  macOS `selected_icon` + `list_icons` still stubs.
 - Ad-hoc signing means macOS keys the Accessibility grant to each build's signature:
   **every new CI build must be granted again** (stale entries accumulate in the list).
 - Remaining Route 1 work after AX hover verified on Mini: macOS overlay/panel look,

@@ -109,10 +109,16 @@ pub fn open_for_target(app: &AppHandle) {
 
     let Some(icon) = target else {
         crate::logfile::log(app, "editor: no desktop icon under cursor or selected");
-        // Missing Accessibility permission makes every lookup fail, so the
-        // hotkey would look dead with no explanation anywhere but the log.
+        // A hotkey that does nothing is indistinguishable from one that never
+        // fired, so always say something: which of the two failed, and (on
+        // macOS) what the accessibility tree actually held under the cursor.
         if icons::accessibility_trusted() == Some(false) {
             warn_accessibility(app);
+        } else {
+            if let Some(chain) = icons::debug_cursor_chain() {
+                crate::logfile::log(app, &chain);
+            }
+            warn_no_target(app);
         }
         return;
     };
@@ -128,6 +134,26 @@ pub fn open_for_target(app: &AppHandle) {
     };
     crate::logfile::log(app, &format!("editor: opening for '{}'", icon.name));
     open_editor(app, &icon.name, path);
+}
+
+/// The hotkey fired but found nothing to attach a note to. Says so once per
+/// run: silence here reads as "the hotkey is broken".
+fn warn_no_target(app: &AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog()
+        .message(
+            "The note hotkey works, but there was no desktop file or folder \
+             under the pointer.\n\nPut the pointer over a desktop icon and \
+             press it again. If that keeps failing, the app wrote what it saw \
+             to tofu.log in its application-support folder.",
+        )
+        .title("No desktop icon under the pointer")
+        .show(|_| {});
 }
 
 /// Tell the user the hotkey cannot find icons without the Accessibility grant,
