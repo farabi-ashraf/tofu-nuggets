@@ -96,10 +96,16 @@ cargo tauri build
 Windows 10 and Windows 11. A macOS port (macOS 14+, Apple silicon) is under way:
 the codebase is single-branch with platform code behind traits/`#[cfg]`, and CI
 compiles and tests every change on both platforms — each CI run also uploads an
-ad-hoc-signed arm64 `.dmg` artifact for testing. Hover requires the Accessibility
-permission; because beta builds are not notarized, the first launch needs
-System Settings → Privacy & Security → "Open Anyway". Badges and icon-selection
+ad-hoc-signed arm64 `.dmg` artifact for testing. Badges and icon-selection
 targeting are not ported yet.
+
+Beta macOS builds are ad-hoc signed but **not notarized**, so first launch needs
+System Settings → Privacy & Security → "Open Anyway". If macOS instead calls the
+app "damaged", the copy lost its signature in transit (unzipping a `.app` on a
+non-Mac does this) — re-download the `.dmg` and copy the app out of the mounted
+image rather than moving an extracted `.app` between machines. Hover also needs
+the Accessibility permission (System Settings → Privacy & Security →
+Accessibility), which the app requests on first run; grant it, then relaunch.
 
 ## Security
 

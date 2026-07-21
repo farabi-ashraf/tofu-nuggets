@@ -58,6 +58,16 @@
   (14-day retention, ~5.8 MB verified). `icon.png` added to bundle icons (bundler
   composes the `.icns`). README: per-platform build prereqs + macOS beta/Gatekeeper
   note. upload-artifact bumped v4→v5 (Node 20 deprecation warning).
+- **macOS signing gotcha (2026-07-21, cost a test cycle)**: Tauri does NOT sign the
+  bundle unless told to. The first artifact was unsigned → Apple silicon refused it
+  with *"Tofu Nuggets.app is damaged and can't be opened"* (unsigned + quarantine
+  reads as tampering; the "Open Anyway" path never appears). Fix: `bundle.macOS
+  .signingIdentity: "-"` (ad-hoc) + `minimumSystemVersion: 14.0`, plus a CI
+  `codesign --verify --strict` step so an unsigned bundle fails the build instead of
+  the tester's Mac. Also: never move an extracted `.app` between machines (a non-Mac
+  unzip strips the signature) — transfer the `.dmg`.
+- `actions/upload-artifact`: v5 AND v4 declare `using: node20` upstream → deprecation
+  warning regardless of our config; **v7.0.1 is node24** (v6 = Dec 2025, v7 = Feb 2026).
 - **NEXT: owner tests AX hover on Mini (planned 2026-07-22, work hours)** — sideload
   steps in PR #13 body; checklist in PR #12 body: Accessibility prompt → grant +
   relaunch → hotkey note on desktop file → hover. Watch: retina rect alignment

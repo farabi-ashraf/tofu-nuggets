@@ -31,6 +31,10 @@
     "publisher": "Tofu Nuggets",
     "shortDescription": "Hover notes for your desktop icons",
     "longDescription": "Hover over a desktop file or folder to see the note you left on it. Rich text nuggets with todos and file links, created with a global hotkey, stored beside your files.",
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
