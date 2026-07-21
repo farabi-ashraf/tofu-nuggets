@@ -3,12 +3,8 @@
 mod appstate;
 #[cfg(windows)]
 mod badges;
-// Badge layer is a Windows GDI layered window; the macOS equivalent comes in
-// a later Route 1 PR. Stub keeps main wiring identical on both platforms (B2).
-#[cfg(not(windows))]
-mod badges {
-    pub fn spawn(_paused: crate::appstate::Paused, _settings: crate::settings::Shared) {}
-}
+#[cfg(target_os = "macos")]
+mod badges_mac;
 #[cfg(windows)]
 mod desktop;
 #[cfg(target_os = "macos")]
@@ -171,7 +167,10 @@ fn main() {
 
             let paused = app.state::<Paused>().inner().clone();
             hover::spawn(app.handle().clone(), paused.clone());
+            #[cfg(windows)]
             badges::spawn(paused, settings);
+            #[cfg(target_os = "macos")]
+            badges_mac::spawn(app.handle().clone(), paused, settings);
 
             tray::build(app.handle())?;
 
