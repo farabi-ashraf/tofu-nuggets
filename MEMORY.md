@@ -115,6 +115,19 @@ fixed in `wip-mac-hover-fixes`:
    scale is 2.0). Fix: macOS keeps everything in POINTS end to end and the panel is
    placed with `LogicalPosition`/`LogicalSize`; Windows stays physical-px +
    `PhysicalPosition`. **Never reintroduce the conversion.**
+**Fourth Mini run (2026-07-21, after PR #18)**: placement fixed — panel now appears
+beside the icon. **Process still dies after the panel hides, BUT only when no other
+app window is open** (main list or settings window open ⇒ survives). That rules the
+hover/AX code out as the direct cause and points at last-window teardown. Response
+(`wip-mac-window-lifetime`): log `ExitRequested`(+code)/`Exit`/window
+`Destroyed`/`CloseRequested` so a clean exit is distinguishable from a crash in
+tofu.log, and set macOS `ActivationPolicy::Accessory` (correct for a menu-bar/tray
+app anyway; Regular ties lifetime to windows and adds a Dock icon). **If the log
+shows "exit requested" before death it is a graceful exit path; if it shows nothing,
+it is a hard crash and the macOS crash report in `~/Library/Logs/DiagnosticReports/`
+names the faulting call.** Watch for a regression: Accessory apps must still take
+keyboard focus in the editor window.
+
 2. **App died a few seconds after the panel appeared.** The hover thread called
    `show`/`hide`/`set_position` directly — legal on Win32, fatal on macOS, where all
    AppKit window calls must be on the main thread. Fix: macOS marshals every panel
