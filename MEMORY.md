@@ -139,17 +139,20 @@ Mini. Follow-ups from that run:
    found, 1 children" in the log). Now the walk descends through display-sized
    containers until it finds item-shaped children, so the depth is not hard-coded.
 
-1. **Icon enumeration** (`wip-mac-icon-enumeration`, current): macOS `list_icons` +
-   `selected_icon` implemented by walking down from Finder's application element —
-   pid comes from `CGWindowListCopyWindowInfo` (also the API the future macOS badge
-   occlusion pass needs), then the first `AXScrollArea` inside a display-spanning
-   Finder window, whose children are the icons. Same container the hit-test lands in,
-   reached without the pointer. `debug_finder_tree()` logs Finder's window/children
-   shape when the container is not found, appended to the cursor-chain dump —
-   **structure is a guess again, so expect the log to correct it.** Unblocks badges.
-2. **macOS badge layer**: needs `list_icons` (above) + a click-through always-on-top
-   window + occlusion via `CGWindowListCopyWindowInfo` (Windows uses GDI + WinEvent
-   hooks; none of that ports).
+1. **Icon enumeration — DONE, PR #23 merged (2026-07-21, Mini-verified)**: macOS
+   `list_icons` + `selected_icon` walk down from Finder's application element — pid
+   from `CGWindowListCopyWindowInfo` (also the API the future badge occlusion pass
+   needs), then `find_icon_container()` descends through display-sized containers
+   (per the real shape in 0b) until item-shaped children appear. `selected_icon`
+   asks the container then its parent via `selection_in()` helper. Owner confirmed:
+   select icon → pointer on bare wallpaper → hotkey opens that icon's note.
+   `debug_finder_tree()` diagnostic stays (prints container role/title + first
+   three children) for future Finder-shape drift. Unblocks badges.
+2. **macOS badge layer — NEXT PR**: `list_icons` now works; needs a click-through
+   always-on-top window + occlusion via `CGWindowListCopyWindowInfo` (Windows uses
+   GDI + WinEvent hooks; none of that ports). Remember macOS window rules: all
+   AppKit calls on main thread, never `hide()` a lone window (park pattern),
+   positions in POINTS/Logical.
 3. **Release workflow macOS entry**: tag → signed dmg on the GitHub release, so
    testers stop downloading CI artifacts. Needs a version bump decision (0.3.0).
 
