@@ -2,11 +2,16 @@
 //!
 //! Mirror of the Windows UIA approach: a system-wide AX hit-test
 //! (`AXUIElementCopyElementAtPosition`, the `ElementFromPoint` analogue)
-//! identifies the element under the cursor; it counts as a desktop icon when
-//! it is an `AXImage` inside an `AXScrollArea` whose window covers a whole
-//! display — Finder draws the desktop as a borderless full-screen window, so
-//! this distinguishes desktop icons from icon-view items in ordinary Finder
-//! windows. Display names resolve to paths against `~/Desktop`.
+//! identifies the element under the cursor. A hit counts as a desktop icon
+//! when its ancestor chain contains Finder's `AXScrollArea` icon container and
+//! any window it reports spans a display. Display names resolve to paths
+//! against `~/Desktop`.
+//!
+//! The element shapes here are NOT contractual — Finder exposes desktop items
+//! differently across releases, and the first attempt (exact roles, exact
+//! display-sized window) matched nothing on macOS 26. Hence the tolerant walk,
+//! and `debug_cursor_chain`, which logs what was actually under the cursor
+//! whenever targeting fails.
 //!
 //! Requires the Accessibility permission (System Settings → Privacy &
 //! Security → Accessibility). `new_icons` triggers the system prompt via
@@ -250,21 +255,109 @@ fn scale_at_pts(x: f64, y: f64) -> f64 {
     1.0
 }
 
-/// The window covers a whole display (couple-of-points tolerance) — Finder's
-/// borderless desktop window signature. Heuristic to verify on hardware:
-/// distinguishes desktop icons from icon-view items in normal Finder windows,
-/// which are practically never exactly display-sized at the display origin.
-fn window_is_desktop(win: CFTypeRef) -> bool {
+/// How far up the AX tree to look for the desktop container. Finder nests the
+/// desktop a few levels deep and the exact depth is not contractual.
+const MAX_DEPTH: usize = 8;
+
+/// The hit element plus its ancestors, nearest first.
+fn ancestor_chain(elem: CFTypeRef) -> Vec<CfOwned> {
+    let mut chain = Vec::new();
+    let mut cur = copy_attr(elem, "AXParent");
+    while let Some(node) = cur {
+        cur = copy_attr(node.0, "AXParent");
+        chain.push(node);
+        if chain.len() >= MAX_DEPTH {
+            break;
+        }
+    }
+    chain
+}
+
+/// First non-empty human name of an element: Finder exposes desktop item names
+/// through different attributes depending on the element (the icon image, its
+/// label, or the item row).
+fn element_name(elem: CFTypeRef) -> Option<String> {
+    ["AXTitle", "AXFilename", "AXDescription", "AXValue"]
+        .iter()
+        .find_map(|a| string_attr(elem, a).filter(|s| !s.is_empty()))
+}
+
+/// Window (if any) covers most of a display — the Finder desktop window spans
+/// the screen, while ordinary windows normally do not.
+///
+/// Deliberately permissive: a false positive means a maximized Finder window in
+/// icon view can also show notes, which is harmless; a false negative means
+/// hover does not exist at all. An exact display-size match was tried first and
+/// found nothing on macOS 26, hence the ratio.
+fn covers_a_display(win: CFTypeRef) -> bool {
     let Some(f) = frame_pts(win) else {
         return false;
     };
-    const TOL: f64 = 2.0;
-    displays().iter().any(|(b, _)| {
-        (f.origin.x - b.origin.x).abs() <= TOL
-            && (f.origin.y - b.origin.y).abs() <= TOL
-            && (f.size.width - b.size.width).abs() <= TOL
-            && (f.size.height - b.size.height).abs() <= TOL
-    })
+    let area = f.size.width * f.size.height;
+    displays()
+        .iter()
+        .any(|(b, _)| area >= 0.8 * (b.size.width * b.size.height))
+}
+
+/// Is this hit inside the desktop's icon container? Requires an `AXScrollArea`
+/// ancestor (Finder's icon container) and, when the chain exposes a window at
+/// all, one that spans a display. The desktop window is special and does not
+/// always answer `AXWindow`, so a missing window is accepted rather than
+/// treated as a rejection.
+fn chain_is_desktop(chain: &[CfOwned]) -> bool {
+    let has_scroll_area = chain
+        .iter()
+        .any(|e| string_attr(e.0, "AXRole").as_deref() == Some("AXScrollArea"));
+    if !has_scroll_area {
+        return false;
+    }
+    match chain.iter().find_map(|e| copy_attr(e.0, "AXWindow")) {
+        Some(win) => covers_a_display(win.0),
+        None => true,
+    }
+}
+
+/// Human-readable dump of what sits under the cursor, written to the log when
+/// targeting fails. Without it a failed lookup is indistinguishable from the
+/// hotkey never firing, which cost a full hardware test round.
+pub fn debug_cursor_chain() -> Option<String> {
+    let (x, y) = cursor_pos()?;
+    let scale = scale_at_pts(x as f64, y as f64);
+    let (xp, yp) = (x as f64 / scale, y as f64 / scale);
+    let system_wide = CfOwned::new(unsafe { AXUIElementCreateSystemWide() })?;
+    let mut raw: AXUIElementRef = std::ptr::null();
+    let err =
+        unsafe { AXUIElementCopyElementAtPosition(system_wide.0, xp as f32, yp as f32, &mut raw) };
+    if err != kAXErrorSuccess {
+        return Some(format!(
+            "AX hit-test at ({xp:.0},{yp:.0}) pts failed with AXError {err} \
+             (-25204 = API disabled: permission missing or not yet applied to \
+             this build)"
+        ));
+    }
+    let elem = CfOwned::new(raw)?;
+    let describe = |e: CFTypeRef| {
+        let role = string_attr(e, "AXRole").unwrap_or_else(|| "?".into());
+        let sub = string_attr(e, "AXSubrole").unwrap_or_else(|| "-".into());
+        let name = element_name(e).unwrap_or_else(|| "-".into());
+        let f = frame_pts(e)
+            .map(|f| {
+                format!(
+                    "{:.0},{:.0} {:.0}x{:.0}",
+                    f.origin.x, f.origin.y, f.size.width, f.size.height
+                )
+            })
+            .unwrap_or_else(|| "no frame".into());
+        format!("{role}/{sub} \"{name}\" [{f}]")
+    };
+    let mut out = format!(
+        "AX chain at ({xp:.0},{yp:.0}) pts:\n  0: {}",
+        describe(elem.0)
+    );
+    for (i, node) in ancestor_chain(elem.0).iter().enumerate() {
+        out.push_str(&format!("\n  {}: {}", i + 1, describe(node.0)));
+    }
+    Some(out)
 }
 
 impl DesktopIcons for MacIcons {
@@ -289,22 +382,20 @@ impl DesktopIcons for MacIcons {
         }
         let elem = CfOwned::new(raw)?;
 
-        if string_attr(elem.0, "AXRole")? != "AXImage" {
-            return None;
-        }
-        let parent = copy_attr(elem.0, "AXParent")?;
-        if string_attr(parent.0, "AXRole")? != "AXScrollArea" {
-            return None;
-        }
-        let window = copy_attr(elem.0, "AXWindow")?;
-        if !window_is_desktop(window.0) {
+        let chain = ancestor_chain(elem.0);
+        if !chain_is_desktop(&chain) {
             return None;
         }
 
-        let name = string_attr(elem.0, "AXTitle")
-            .filter(|s| !s.is_empty())
-            .or_else(|| string_attr(elem.0, "AXDescription").filter(|s| !s.is_empty()))?;
-        let f = frame_pts(elem.0)?;
+        // The element actually hit may be the icon image, its text label, or
+        // the item wrapping both, and only some of those carry the name — so
+        // take the nearest one that has both a name and a frame. Bounded to
+        // the item's own levels so a miss cannot fall through to the whole
+        // scroll area and report the desktop itself as an icon.
+        let (name, f) = std::iter::once(&elem)
+            .chain(chain.iter().take(2))
+            .filter(|e| string_attr(e.0, "AXRole").as_deref() != Some("AXScrollArea"))
+            .find_map(|e| Some((element_name(e.0)?, frame_pts(e.0)?)))?;
         let s = scale_at_pts(f.origin.x, f.origin.y);
         let rect = IconRect {
             left: (f.origin.x * s).round() as i32,

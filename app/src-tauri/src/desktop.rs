@@ -231,6 +231,12 @@ pub fn accessibility_trusted() -> Option<bool> {
 
 pub fn open_accessibility_settings() {}
 
+/// Only macOS needs the "what was actually under the cursor" dump; UIA
+/// detection is stable enough not to have needed one.
+pub fn debug_cursor_chain() -> Option<String> {
+    None
+}
+
 pub fn init_com_for_thread() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
