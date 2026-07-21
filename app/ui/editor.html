@@ -24,6 +24,15 @@
       <button data-cmd="linkFile" title="Link to a file">📄</button>
       <button data-cmd="linkFolder" title="Link to a folder">📁</button>
     </div>
+    <!-- URLs are typed here rather than in window.prompt(): WKWebView does not
+         implement prompt at all, so on macOS the link command silently did
+         nothing. In-page works the same on both platforms. -->
+    <div class="link-bar" id="link-bar" hidden>
+      <input id="link-url" type="text" inputmode="url" spellcheck="false"
+             placeholder="example.com or https://…" aria-label="Link URL" />
+      <button id="link-apply">Add</button>
+      <button id="link-cancel">Cancel</button>
+    </div>
     <div id="editor" class="note-editor"></div>
     <footer class="statusbar">
       <span id="save-state" role="status"></span>

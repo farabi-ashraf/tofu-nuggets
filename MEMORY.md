@@ -103,6 +103,21 @@
 - macOS log path: `~/Library/Application Support/Tofu Nuggets/tofu.log` (renamed — see
   the data-dir bug below).
 
+## macOS status after PR #21 (2026-07-21): app survives every tested case
+
+Startup, hover cycle, edit-note, and new-note-then-close all confirmed stable on the
+Mini. Follow-ups from that run:
+- **Web-link entry was dead on macOS** — it used `window.prompt`, which WKWebView does
+  not implement (WebView2 does, hence Windows worked). Replaced with an in-page link
+  bar (`wip-mac-link-bar`); ⌘S/⌘K now work alongside Ctrl. **Never use
+  prompt/alert/confirm in this UI.**
+- **External SSD on the desktop is not annotatable** (logged as "virtual icon"):
+  volumes live at `/Volumes/<name>` but name→path resolution only searches desktop
+  roots. Owner filed as future reference, not fixed — adding `/Volumes` as a root
+  would pull every mounted disk into the index scan.
+- Still open from earlier: deleted note reappearing after reinstall (needs a repro:
+  does the sidecar survive in `~/Desktop/.nuggets/`?).
+
 ## macOS hover: WORKS as of the third Mini run (2026-07-21)
 
 Hotkey opens the editor, note saved, **hover panel appears over a desktop icon** —

@@ -79,18 +79,10 @@ function runCommand(cmd) {
     case "taskList":
       chain.toggleTaskList().run();
       break;
-    case "link": {
-      if (editor.isActive("link")) {
-        chain.unsetLink().run();
-        break;
-      }
-      const raw = window.prompt("Link URL:");
-      if (!raw) break;
-      const url = normalizeUrl(raw);
-      if (url) chain.setLink({ href: url }).run();
-      else saveState.textContent = `not a valid link: ${raw}`;
+    case "link":
+      if (editor.isActive("link")) chain.unsetLink().run();
+      else openLinkBar();
       break;
-    }
     case "linkFile":
       linkTarget(false);
       break;
@@ -99,6 +91,56 @@ function runCommand(cmd) {
       break;
   }
 }
+
+// --- Link bar. Replaces window.prompt(), which WKWebView does not implement:
+// on macOS the link command returned nothing at all and links could never be
+// added. The bar keeps the editor's selection, since TipTap tracks it
+// independently of DOM focus and the chain re-focuses before applying.
+const linkBar = document.getElementById("link-bar");
+const linkUrl = document.getElementById("link-url");
+
+function openLinkBar() {
+  linkBar.hidden = false;
+  linkUrl.value = editor.getAttributes("link").href || "";
+  linkUrl.focus();
+  linkUrl.select();
+}
+
+function closeLinkBar() {
+  linkBar.hidden = true;
+  editor.commands.focus();
+}
+
+function applyLinkBar() {
+  const raw = linkUrl.value.trim();
+  if (!raw) {
+    closeLinkBar();
+    return;
+  }
+  const url = normalizeUrl(raw);
+  if (!url) {
+    saveState.textContent = `not a valid link: ${raw}`;
+    return;
+  }
+  editor.chain().focus().setLink({ href: url }).run();
+  saveState.textContent = "unsaved changes";
+  closeLinkBar();
+}
+
+document.getElementById("link-apply").addEventListener("click", applyLinkBar);
+document.getElementById("link-cancel").addEventListener("click", closeLinkBar);
+
+linkUrl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    applyLinkBar();
+  } else if (e.key === "Escape") {
+    // Must not reach the window handler, which closes the whole editor.
+    e.preventDefault();
+    e.stopPropagation();
+    closeLinkBar();
+  }
+});
 
 // Normalize a user-entered web link: bare "example.com" gets https://
 // prefixed, anything with a scheme passes through, garbage returns null.
@@ -229,13 +271,16 @@ document.getElementById("save-btn").addEventListener("click", save);
 document.getElementById("close-btn").addEventListener("click", saveAndClose);
 
 window.addEventListener("keydown", (e) => {
+  // Command is the shortcut modifier on macOS, Control elsewhere.
+  const mod = e.ctrlKey || e.metaKey;
   if (e.key === "Escape") {
     e.preventDefault();
-    saveAndClose();
-  } else if (e.ctrlKey && e.key.toLowerCase() === "s") {
+    if (!linkBar.hidden) closeLinkBar();
+    else saveAndClose();
+  } else if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();
     save();
-  } else if (e.ctrlKey && e.key.toLowerCase() === "k") {
+  } else if (mod && e.key.toLowerCase() === "k") {
     e.preventDefault();
     runCommand("link");
   }
