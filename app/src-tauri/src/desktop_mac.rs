@@ -360,6 +360,14 @@ fn find_icon_container(elem: CFTypeRef, depth: usize) -> Option<CfOwned> {
         .find_map(|k| find_icon_container(k.0, depth - 1))
 }
 
+/// First selected child of `elem` that looks like a desktop item.
+fn selection_in(elem: CFTypeRef, dirs: &[PathBuf]) -> Option<Icon> {
+    let selected = copy_attr(elem, "AXSelectedChildren")?;
+    array_items(selected.0)
+        .into_iter()
+        .find_map(|kid| icon_from(kid.0, dirs))
+}
+
 /// Is this the desktop itself rather than an item on it?
 ///
 /// The container answers `AXTitle` too — "Desktop" — and pointing at bare
@@ -588,18 +596,13 @@ impl DesktopIcons for MacIcons {
 
     fn selected_icon(&self) -> Option<Icon> {
         let container = desktop_icon_container()?;
+        if let Some(icon) = selection_in(container.0, &self.dirs) {
+            return Some(icon);
+        }
         // Which element answers AXSelectedChildren is not contractual — the
-        // group holding the icons or the scroll area above it — so ask both.
-        let parent = copy_attr(container.0, "AXParent");
-        [Some(&container), parent.as_ref()]
-            .into_iter()
-            .flatten()
-            .find_map(|elem| {
-                let selected = copy_attr(elem.0, "AXSelectedChildren")?;
-                array_items(selected.0)
-                    .into_iter()
-                    .find_map(|kid| icon_from(kid.0, &self.dirs))
-            })
+        // group holding the icons, or the scroll area above it.
+        let parent = copy_attr(container.0, "AXParent")?;
+        selection_in(parent.0, &self.dirs)
     }
 }
 
