@@ -160,6 +160,50 @@ body.drop-target::after {
   background: var(--border);
 }
 
+.link-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.link-bar[hidden] {
+  display: none;
+}
+
+.link-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+}
+
+.link-bar input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.link-bar button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: calc(12px * var(--font-scale));
+}
+
+.link-bar button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .note-editor {
   flex: 1;
   overflow-y: auto;

@@ -102,3 +102,5 @@
 - Watcher rename/move updates the index but doesn't emit `nuggets:changed` → open main window shows stale name until reopened.
 - Rename while app not running orphans the sidecar (old filename no longer matches; note preserved on disk, unlisted). Renaming back relinks.
 - Item moved off the desktop then back: hover+badge relink immediately (sidecar re-read), main list only after next index rebuild (restart).
+- **Mounted volumes on the macOS desktop are not annotatable**: an external disk shows on the desktop but lives at `/Volumes/<name>`, while name→path resolution only searches the desktop roots, so it is reported as a virtual icon ("has no filesystem path"). Adding `/Volumes` as a root would also pull every mounted disk into the index scan — deliberate decision needed before changing it.
+- **No `window.prompt`/`alert`/`confirm` in UI code**: WKWebView does not implement them (they silently do nothing on macOS), which is why link entry is an in-page bar in the editor. Keep new UI in-page.
