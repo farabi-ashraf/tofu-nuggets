@@ -343,9 +343,25 @@ fn find_scroll_area(elem: CFTypeRef, depth: usize) -> Option<CfOwned> {
         .find_map(|kid| find_scroll_area(kid.0, depth - 1))
 }
 
+/// Is this the desktop itself rather than an item on it?
+///
+/// The container answers `AXTitle` too — "Desktop" — and pointing at bare
+/// wallpaper hits it, which produced a phantom icon by that name and, worse,
+/// counted as a hit so the hotkey never fell back to the selection. Icons are
+/// never display-sized, so geometry settles it without guessing at roles.
+fn is_container(elem: CFTypeRef) -> bool {
+    matches!(
+        string_attr(elem, "AXRole").as_deref(),
+        Some("AXScrollArea") | Some("AXWindow") | Some("AXApplication")
+    ) || covers_a_display(elem)
+}
+
 /// An icon element → `Icon`. Items without a name are skipped: they are the
 /// container's own scrollbars and decorations, not desktop items.
 fn icon_from(elem: CFTypeRef, dirs: &[PathBuf]) -> Option<Icon> {
+    if is_container(elem) {
+        return None;
+    }
     let name = element_name(elem)?;
     let f = frame_pts(elem)?;
     Some(Icon {
@@ -514,12 +530,12 @@ impl DesktopIcons for MacIcons {
 
         // The element actually hit may be the icon image, its text label, or
         // the item wrapping both, and only some of those carry the name — so
-        // take the nearest one that has both a name and a frame. Bounded to
-        // the item's own levels so a miss cannot fall through to the whole
-        // scroll area and report the desktop itself as an icon.
+        // take the nearest one that has both a name and a frame. Container
+        // levels are excluded: bare wallpaper hits the desktop itself, which
+        // answers to "Desktop" and would otherwise pass as an icon.
         let (name, f) = std::iter::once(&elem)
             .chain(chain.iter().take(2))
-            .filter(|e| string_attr(e.0, "AXRole").as_deref() != Some("AXScrollArea"))
+            .filter(|e| !is_container(e.0))
             .find_map(|e| Some((element_name(e.0)?, frame_pts(e.0)?)))?;
         let rect = IconRect {
             left: f.origin.x.round() as i32,

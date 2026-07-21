@@ -121,6 +121,16 @@ Mini. Follow-ups from that run:
 
 ## Route 1 leftovers (in progress)
 
+0. **Phantom "Desktop" icon (found 2026-07-21, same branch)**: pointing at bare
+   wallpaper made `icon_at` return an icon named "Desktop" — the tolerant walk from
+   PR #17 skipped `AXScrollArea` ancestors but accepted the desktop *window* above
+   it, which has a name and frame. Logged as "'Desktop' has no filesystem path
+   (virtual icon)". Worse than cosmetic: it counted as a hit, so the hotkey never
+   reached the `selected_icon` fallback (which is why selection targeting appeared
+   dead and no Finder-tree dump was ever written). Fix: `is_container()` rejects
+   `AXScrollArea`/`AXWindow`/`AXApplication` roles **and anything display-sized**
+   (icons never are), applied in both `icon_at` and `icon_from`.
+
 1. **Icon enumeration** (`wip-mac-icon-enumeration`, current): macOS `list_icons` +
    `selected_icon` implemented by walking down from Finder's application element —
    pid comes from `CGWindowListCopyWindowInfo` (also the API the future macOS badge
