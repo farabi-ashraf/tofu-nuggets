@@ -1,6 +1,7 @@
 // Main window: the "all nuggets" list from the SQLite index.
 
 import "./theme.js";
+import { hotkeyParts } from "./hotkeys.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -14,29 +15,15 @@ let entries = [];
 
 // Render the current global hotkey as <kbd> chips in the empty-state hint, so
 // it tracks the user's chosen combination instead of the old hardcoded default.
-const KEY_LABEL = {
-  ctrl: "Ctrl",
-  control: "Ctrl",
-  shift: "Shift",
-  alt: "Alt",
-  super: "Win",
-  meta: "Win",
-  space: "Space",
-};
-
+// Labels come from hotkeys.js so the settings field and this hint agree (and
+// name macOS modifiers as ⌘/⌥/⌃ rather than Windows ones).
 function renderHotkey(combo) {
   if (!hotkeyKeysEl) return;
-  const parts = (combo || "ctrl+shift+n")
-    .split("+")
-    .map((p) => p.trim())
-    .filter(Boolean);
   const nodes = [];
-  parts.forEach((p, i) => {
+  hotkeyParts(combo || "ctrl+shift+n").forEach((label, i) => {
     if (i) nodes.push("+");
     const kbd = document.createElement("kbd");
-    const low = p.toLowerCase();
-    kbd.textContent =
-      KEY_LABEL[low] || (low.length === 1 ? low.toUpperCase() : p[0].toUpperCase() + p.slice(1));
+    kbd.textContent = label;
     nodes.push(kbd);
   });
   hotkeyKeysEl.replaceChildren(...nodes);

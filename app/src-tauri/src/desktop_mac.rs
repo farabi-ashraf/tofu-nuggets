@@ -102,6 +102,7 @@ mod ffi {
     extern "C" {
         pub static kAXTrustedCheckOptionPrompt: CFStringRef;
 
+        pub fn AXIsProcessTrusted() -> Boolean;
         pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
         pub fn AXUIElementCreateSystemWide() -> AXUIElementRef;
         pub fn AXUIElementCopyElementAtPosition(
@@ -385,6 +386,23 @@ pub fn desktop_dirs() -> Vec<PathBuf> {
         .map(|h| PathBuf::from(h).join("Desktop"))
         .into_iter()
         .collect()
+}
+
+/// Whether the Accessibility permission is currently granted. Without it every
+/// AX call fails, so hover and the hotkey's icon targeting do nothing at all —
+/// the UI asks for this to explain that instead of looking broken.
+///
+/// Beta builds are ad-hoc signed, and macOS keys this permission to the code
+/// signature: every new CI build counts as a different app and must be granted
+/// again (old entries pile up in the list and can be removed).
+pub fn accessibility_trusted() -> Option<bool> {
+    Some(unsafe { AXIsProcessTrusted() } != 0)
+}
+
+pub fn open_accessibility_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn();
 }
 
 /// Finder has no equivalent of the desktop ListView infotip; nothing to do.

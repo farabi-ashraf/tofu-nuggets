@@ -72,11 +72,24 @@ pub fn resolve_path(display_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 
 #[cfg(windows)]
 pub use crate::desktop::{
-    cursor_pos, desktop_dirs, init_thread, new_icons, suppress_desktop_infotips,
-    virtual_screen_width,
+    accessibility_trusted, cursor_pos, desktop_dirs, init_thread, new_icons,
+    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_width,
 };
 #[cfg(target_os = "macos")]
 pub use crate::desktop_mac::{
-    cursor_pos, desktop_dirs, init_thread, new_icons, suppress_desktop_infotips,
-    virtual_screen_width,
+    accessibility_trusted, cursor_pos, desktop_dirs, init_thread, new_icons,
+    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_width,
 };
+
+/// `None` where the platform needs no such grant (Windows); `Some(false)`
+/// means hover and hotkey targeting cannot work until the user grants it.
+#[tauri::command]
+pub fn accessibility_status() -> Option<bool> {
+    accessibility_trusted()
+}
+
+/// Open the OS pane where the user grants the permission.
+#[tauri::command]
+pub fn open_accessibility_pane() {
+    open_accessibility_settings();
+}

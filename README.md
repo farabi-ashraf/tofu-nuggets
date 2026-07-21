@@ -103,9 +103,14 @@ Beta macOS builds are ad-hoc signed but **not notarized**, so first launch needs
 System Settings → Privacy & Security → "Open Anyway". If macOS instead calls the
 app "damaged", the copy lost its signature in transit (unzipping a `.app` on a
 non-Mac does this) — re-download the `.dmg` and copy the app out of the mounted
-image rather than moving an extracted `.app` between machines. Hover also needs
-the Accessibility permission (System Settings → Privacy & Security →
-Accessibility), which the app requests on first run; grant it, then relaunch.
+image rather than moving an extracted `.app` between machines.
+
+Hover and the note hotkey both need the Accessibility permission (System Settings
+→ Privacy & Security → Accessibility): without it the app cannot see desktop
+icons and neither feature does anything. Grant it, then quit and reopen the app —
+Settings shows the current status. Because beta builds are ad-hoc signed, macOS
+treats each new build as a different app, so the permission has to be granted
+again after every update.
 
 ## Security
 
