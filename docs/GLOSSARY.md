@@ -82,9 +82,14 @@
 
 ## Platform behavior differences
 
-- **macOS windows hide on close, never destroy** (`main.rs` run handler): AppKit
-  terminates an app after its last visible window closes, and that path skips
-  `ExitRequested`, so `prevent_exit` cannot hold it. Also the platform convention.
+- **macOS ends the process whenever no window is VISIBLE** — hidden ones do not
+  count, and the termination skips `ExitRequested`, so `prevent_exit` never sees it
+  (proved by tofu.log: `exiting` with no `exit requested`, including ~6 s after a
+  launch where no window was ever opened). Two consequences, both macOS-only:
+  windows hide instead of closing (`main.rs` run handler, also the platform
+  convention), and the panel is **parked off-screen instead of hidden**
+  (`overlay::park`) so AppKit always has one visible window. Never call `hide()` on
+  the panel there.
 - **Idle release is Windows-only**: it reclaims WebView2's process tree; WKWebView has
   no equivalent cost and per-hover AppKit window recreation is a needless risk.
 - **Activation policy**: macOS runs as `Accessory` (menu-bar agent, no Dock icon).

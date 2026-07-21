@@ -261,7 +261,18 @@ fn hide_panel(app: &AppHandle) {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS parks the panel off-screen instead of hiding it: an app with no
+/// visible window gets terminated, and the panel is usually the only window
+/// there is (see `overlay::park`).
+#[cfg(target_os = "macos")]
+fn hide_panel(app: &AppHandle) {
+    let Some(win) = app.get_webview_window(overlay::LABEL) else {
+        return;
+    };
+    let _ = app.run_on_main_thread(move || overlay::park(&win));
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn hide_panel(app: &AppHandle) {
     let Some(win) = app.get_webview_window(overlay::LABEL) else {
         return;

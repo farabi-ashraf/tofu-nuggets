@@ -116,14 +116,23 @@ fn main() {
             // idle and recreates it on demand. Failure here is the
             // WebView2-missing signature ("tray alive, all windows dead") —
             // tell the user with a native dialog instead of dying silently.
-            if let Err(e) = overlay::create(app.handle()) {
-                logfile::log(
-                    app.handle(),
-                    &format!("startup: overlay create failed: {e}"),
-                );
-                #[cfg(windows)]
-                webview_missing_alert();
-                std::process::exit(1);
+            match overlay::create(app.handle()) {
+                // macOS keeps the panel parked off-screen rather than hidden,
+                // because an app with no visible window is terminated (see
+                // overlay::park).
+                #[cfg(target_os = "macos")]
+                Ok(win) => overlay::park(&win),
+                #[cfg(not(target_os = "macos"))]
+                Ok(_) => {}
+                Err(e) => {
+                    logfile::log(
+                        app.handle(),
+                        &format!("startup: overlay create failed: {e}"),
+                    );
+                    #[cfg(windows)]
+                    webview_missing_alert();
+                    std::process::exit(1);
+                }
             }
 
             // Silence the desktop's native infotips so our panel is the sole
