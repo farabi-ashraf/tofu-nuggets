@@ -28,10 +28,15 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let pause = CheckMenuItem::with_id(app, PAUSE, "Pause hover", true, false, None::<&str>)?;
     let settings = MenuItem::with_id(app, SETTINGS, "Settings…", true, None::<&str>)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+    // Each platform names this after its own login flow.
+    #[cfg(target_os = "macos")]
+    let autostart_label = "Open at Login";
+    #[cfg(not(target_os = "macos"))]
+    let autostart_label = "Start with Windows";
     let autostart = CheckMenuItem::with_id(
         app,
         AUTOSTART,
-        "Start with Windows",
+        autostart_label,
         true,
         autostart_on,
         None::<&str>,

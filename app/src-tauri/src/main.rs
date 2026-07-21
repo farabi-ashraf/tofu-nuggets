@@ -188,6 +188,21 @@ fn main() {
                 tauri::WindowEvent::Destroyed => {
                     logfile::log(app, &format!("window '{label}' destroyed"))
                 }
+                // macOS terminates an app once its last visible window closes,
+                // and that path does not raise ExitRequested — the log showed
+                // `window 'main' destroyed` followed by `exiting` with no
+                // request in between, so `prevent_exit` never got a say. Keep
+                // the windows alive and merely hidden, which is also what a
+                // Mac user expects from closing a window: the app stays.
+                #[cfg(target_os = "macos")]
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    if let Some(win) = app.get_webview_window(&label) {
+                        let _ = win.hide();
+                    }
+                    logfile::log(app, &format!("window '{label}' hidden instead of closed"));
+                }
+                #[cfg(not(target_os = "macos"))]
                 tauri::WindowEvent::CloseRequested { .. } => {
                     logfile::log(app, &format!("window '{label}' close requested"))
                 }

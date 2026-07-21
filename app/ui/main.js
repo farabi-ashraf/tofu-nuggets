@@ -1,7 +1,14 @@
 // Main window: the "all nuggets" list from the SQLite index.
 
 import "./theme.js";
-import { hotkeyParts } from "./hotkeys.js";
+import { hotkeyParts, IS_MAC } from "./hotkeys.js";
+
+// The file manager and the way the app is removed are named differently per
+// platform; nothing else in this window is platform-specific.
+const REVEAL_LABEL = IS_MAC ? "Reveal in Finder" : "Show in Explorer";
+const REMOVAL_PHRASE = IS_MAC
+  ? "stay on disk if you move the app to the Trash"
+  : "stay on disk after uninstalling";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -52,7 +59,7 @@ function row(entry) {
       <div class="row-preview"></div>
     </div>
     <div class="row-actions">
-      <button data-act="open" title="Show in Explorer">Open</button>
+      <button data-act="open" title="${REVEAL_LABEL}">Open</button>
       <button data-act="edit" title="Edit note">Edit</button>
       <button data-act="del" class="danger" title="Delete note">Delete</button>
     </div>`;
@@ -114,6 +121,13 @@ async function reload() {
 filterEl.addEventListener("input", render);
 listen("nuggets:changed", reload);
 reload();
+
+const footHint = document.getElementById("foot-hint");
+if (footHint) {
+  footHint.textContent =
+    `Notes are stored beside your files and ${REMOVAL_PHRASE}. ` +
+    "To remove them all, use Settings → Delete all notes.";
+}
 
 // Seed the hotkey hint immediately, then sync from settings and keep it live.
 renderHotkey();
