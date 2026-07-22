@@ -31,6 +31,10 @@
 //! the ApplicationServices umbrella framework, kept to the minimum this
 //! module actually calls.
 //!
+//! Also home to the CoreGraphics window-list helpers the badge layer uses
+//! (`onscreen_window_rects`, `display_bounds_pts`) — CG, not AX: they need no
+//! Accessibility permission and return bounds already in points.
+//!
 //! Two ways in, both landing on the same Finder icon container: the hit-test
 //! above (hover, hotkey-under-cursor) and, for `list_icons`/`selected_icon`,
 //! a walk down from Finder's application element — found through its pid in
@@ -140,12 +144,18 @@ mod ffi {
 
         pub static kCGWindowOwnerName: CFStringRef;
         pub static kCGWindowOwnerPID: CFStringRef;
+        pub static kCGWindowBounds: CFStringRef;
+        pub static kCGWindowAlpha: CFStringRef;
 
         pub fn AXIsProcessTrusted() -> Boolean;
         pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
         pub fn AXUIElementCreateSystemWide() -> AXUIElementRef;
         pub fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
         pub fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> CFTypeRef;
+        pub fn CGRectMakeWithDictionaryRepresentation(
+            dict: CFDictionaryRef,
+            rect: *mut CGRect,
+        ) -> Boolean;
         pub fn AXUIElementCopyElementAtPosition(
             application: AXUIElementRef,
             x: f32,
@@ -679,6 +689,72 @@ pub fn open_accessibility_settings() {
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
+}
+
+/// Active display bounds in points, as portable rects (badge layer geometry).
+pub fn display_bounds_pts() -> Vec<IconRect> {
+    displays()
+        .iter()
+        .map(|b| IconRect {
+            left: b.origin.x.round() as i32,
+            top: b.origin.y.round() as i32,
+            right: (b.origin.x + b.size.width).round() as i32,
+            bottom: (b.origin.y + b.size.height).round() as i32,
+        })
+        .collect()
+}
+
+/// Rects (points, global top-left origin) of every on-screen window that can
+/// cover a badge dot: other processes' windows plus the menu bar and Dock,
+/// excluding the desktop band (wallpaper + icons) and fully transparent
+/// windows. Our own windows are excluded to match the Windows badge layer —
+/// and because the parked panel must never count as an occluder.
+///
+/// This is the CoreGraphics window list, not AX: it needs no Accessibility
+/// permission and one call returns every window with bounds already in
+/// points.
+pub fn onscreen_window_rects() -> Vec<IconRect> {
+    // kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements.
+    let Some(list) = CfOwned::new(unsafe { CGWindowListCopyWindowInfo(1 | 16, 0) }) else {
+        return Vec::new();
+    };
+    let own_pid = std::process::id() as i32;
+    let mut out = Vec::new();
+    for win in array_items(list.0) {
+        let pid_ref = unsafe { CFDictionaryGetValue(win.0, kCGWindowOwnerPID) };
+        let mut pid: i32 = 0;
+        // kCFNumberSInt32Type
+        if !pid_ref.is_null()
+            && unsafe { CFNumberGetValue(pid_ref, 3, &mut pid as *mut _ as *mut c_void) } != 0
+            && pid == own_pid
+        {
+            continue;
+        }
+        let alpha_ref = unsafe { CFDictionaryGetValue(win.0, kCGWindowAlpha) };
+        let mut alpha: f64 = 1.0;
+        // kCFNumberFloat64Type
+        if !alpha_ref.is_null()
+            && unsafe { CFNumberGetValue(alpha_ref, 6, &mut alpha as *mut _ as *mut c_void) } != 0
+            && alpha <= 0.0
+        {
+            continue;
+        }
+        let bounds_ref = unsafe { CFDictionaryGetValue(win.0, kCGWindowBounds) };
+        if bounds_ref.is_null() {
+            continue;
+        }
+        let mut r = CGRect::default();
+        if unsafe { CGRectMakeWithDictionaryRepresentation(bounds_ref, &mut r) } == 0 {
+            continue;
+        }
+        out.push(IconRect {
+            left: r.origin.x.round() as i32,
+            top: r.origin.y.round() as i32,
+            right: (r.origin.x + r.size.width).round() as i32,
+            bottom: (r.origin.y + r.size.height).round() as i32,
+        });
+    }
+    out
 }
 
 /// Finder has no equivalent of the desktop ListView infotip; nothing to do.

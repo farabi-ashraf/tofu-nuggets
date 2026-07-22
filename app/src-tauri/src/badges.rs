@@ -13,8 +13,9 @@
 //! ~100 ms; a 2 s timer handles icon-position/sidecar drift while the desktop
 //! is foreground. Zero work while nothing changes.
 //!
-//! Windows-only module (cfg-gated in main.rs; macOS gets a no-op stub until
-//! its own badge approach lands in Route 1).
+//! Windows-only module (cfg-gated in main.rs; the macOS layer is
+//! `badges_mac.rs` — a click-through webview window, since none of the GDI /
+//! WinEvent machinery here ports).
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 

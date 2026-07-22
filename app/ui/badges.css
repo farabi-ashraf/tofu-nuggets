@@ -1,0 +1,28 @@
+/* Badge layer page (macOS): fully transparent, pointer events never reach it
+   (the window is click-through at the native level anyway). Dots match the
+   Windows GDI layer: warm accent fill, light ring for dark wallpapers. */
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+#layer {
+  position: fixed;
+  inset: 0;
+}
+
+.dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(245, 143, 60, 0.9); /* #F58F3C @ 0.9 = Windows BADGE_RGBA */
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+}

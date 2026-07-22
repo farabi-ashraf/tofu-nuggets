@@ -148,11 +148,22 @@ Mini. Follow-ups from that run:
    select icon → pointer on bare wallpaper → hotkey opens that icon's note.
    `debug_finder_tree()` diagnostic stays (prints container role/title + first
    three children) for future Finder-shape drift. Unblocks badges.
-2. **macOS badge layer — NEXT PR**: `list_icons` now works; needs a click-through
-   always-on-top window + occlusion via `CGWindowListCopyWindowInfo` (Windows uses
-   GDI + WinEvent hooks; none of that ports). Remember macOS window rules: all
-   AppKit calls on main thread, never `hide()` a lone window (park pattern),
-   positions in POINTS/Logical.
+2. **macOS badge layer — PR `wip-mac-badges` (2026-07-22, hardware-UNtested)**:
+   new `badges_mac.rs` — transparent click-through always-on-top **webview**
+   window (`badges` label, `badges.html`) spanning the display bounding box;
+   dots = positioned divs pushed via `badges:update` each 2 s tick (emit
+   unconditional — covers page-load race; page skips unchanged payloads).
+   Occlusion per-dot from `CGWindowListCopyWindowInfo` (new
+   `desktop_mac::onscreen_window_rects` + `display_bounds_pts`; CG not AX, no
+   permission needed; own pid + alpha-0 excluded, desktop elements excluded by
+   flag). AX walk skipped while every display is covered. Window rules
+   honored: built on plain std::thread, AppKit calls via run_on_main_thread,
+   Logical/points only, never `hide()` — dots vanish by emptying the page.
+   main.rs stub replaced with cfg split (`badges::spawn` win /
+   `badges_mac::spawn(app, …)` mac). Mini checklist: dots appear on annotated
+   icons, disappear under overlapping app windows / when paused / badges-off,
+   click-through (dot doesn't eat desktop clicks), position correct on scaled
+   resolution.
 3. **Release workflow macOS entry**: tag → signed dmg on the GitHub release, so
    testers stop downloading CI artifacts. Needs a version bump decision (0.3.0).
 

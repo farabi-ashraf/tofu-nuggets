@@ -15,7 +15,7 @@
 | **Redirected sidecar** | Sidecar for an item whose parent is unwritable (e.g. Public Desktop): lands in the user-desktop `.nuggets` as `<name>.<pathhash>.nugget.json` with the item's abs path in a `target` field. |
 | **Index** | SQLite cache (app-data dir) powering the main-window list. Always rebuildable from sidecars; never the only copy of anything. |
 | **Overlay / panel** | The glassy hover panel window showing a nugget. Transparent, undecorated, never-focusable. |
-| **Badge layer** | Full-desktop click-through layered window drawing dots on annotated icons (GDI, no webview). |
+| **Badge layer** | Full-desktop click-through window drawing dots on annotated icons. Windows: GDI layered window, no webview (`badges.rs`). macOS: transparent webview window fed by `badges:update` (`badges_mac.rs`). |
 | **Hover engine** | Polling loop (cursor + UIA hit-test) deciding when to show/hide the panel. |
 | **Main window** | "All nuggets" list (filter, Open/Edit/Delete rows). |
 | **Editor** | TipTap rich-text window opened by hotkey or Edit. |
@@ -32,9 +32,10 @@
 | `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
 | `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …); accessibility-permission commands (`None` = platform needs no grant) | `DesktopIcons`, `new_icons`, `resolve_path`, `accessibility_status`, `open_accessibility_pane` |
 | `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection, display-name→path resolution, desktop roots, infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
-| `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX hit-test hover + `list_icons`/`selected_icon` by walking down from Finder's app element (pid from the CG window list); hand-declared FFI, points throughout, Accessibility prompt/status, `debug_cursor_chain` + `debug_finder_tree` dumps for the log | `MacIcons`, `debug_cursor_chain` |
+| `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX hit-test hover + `list_icons`/`selected_icon` by walking down from Finder's app element (pid from the CG window list); CG window-list helpers for the badge layer (`onscreen_window_rects`, `display_bounds_pts`); hand-declared FFI, points throughout, Accessibility prompt/status, `debug_cursor_chain` + `debug_finder_tree` dumps for the log | `MacIcons`, `debug_cursor_chain` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
-| `badges.rs` | Badge layer: dot painting, per-dot occlusion, WinEvent-driven refresh. Windows-only (no-op stub on macOS, see main.rs) | `spawn` |
+| `badges.rs` | **Windows** badge layer: GDI dot painting, per-dot occlusion, WinEvent-driven refresh | `spawn` |
+| `badges_mac.rs` | **macOS** badge layer: click-through always-on-top webview window over all displays; per-dot occlusion from the CG window list; 2 s poll (no WinEvent equivalent); dots pushed via `badges:update` | `spawn` |
 | `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir` |
 | `index.rs` | SQLite cache: rebuild scan, upsert/remove/rename, list, clear | `NuggetIndex`, `scan_root` |
 | `watcher.rs` | FS watcher keeping sidecars+index in step with renames/deletes on watched roots | `spawn`, `handle_event` |
@@ -54,6 +55,7 @@
 | File | Owns |
 |---|---|
 | `overlay.html/js/css` | Hover panel rendering, link/checkbox handling |
+| `badges.html/js/css` | macOS badge dots (absolutely-positioned divs; skips DOM work on unchanged payloads) |
 | `editor.html/js/css` | TipTap editor, toolbar, link insertion/normalization, drag-drop of files/folders → `nugget://` links (Tauri drag-drop event, portable) |
 | `main.html/js/css` | All-nuggets list, filter, row actions, hotkey hint, data-lifecycle footer |
 | `settings.html/js/css` | Settings controls, hotkey capture, danger zone (delete all) |
@@ -79,6 +81,7 @@
 | `nuggets:changed` | emit → all windows | Note set changed; main window reloads list. Emitted by editor save/delete and delete-all (NOT by the watcher — known gap). |
 | `settings:changed` | emit → all windows | Full `Settings` payload; `theme.js` + windows re-apply live. |
 | `nugget:show` | emit → overlay | Panel payload; fresh pages pull via `get_current_nugget` instead (emit can beat page load). |
+| `badges:update` | emit → badges (macOS) | Array of `{x,y}` dot centers (points, window-relative). Emitted every refresh tick unconditionally (covers page-load race); page skips unchanged payloads. |
 
 ## Platform behavior differences
 
@@ -93,6 +96,11 @@
 - **Idle release is Windows-only**: it reclaims WebView2's process tree; WKWebView has
   no equivalent cost and per-hover AppKit window recreation is a needless risk.
 - **Activation policy**: macOS runs as `Accessory` (menu-bar agent, no Dock icon).
+- **Badge layer machinery differs entirely**: Windows = GDI layered window +
+  WinEvent hooks (push-based occlusion within ~100 ms); macOS = transparent
+  click-through webview window + CG window list polled on the 2 s tick (no
+  cheap cross-process window-move hook exists). Same 2 s icon/sidecar cadence
+  and per-dot occlusion model on both.
 - Per-platform wording lives next to the code that shows it: tray autostart label
   (`tray.rs`), file-manager + app-removal wording (`main.js`), modifier labels
   (`hotkeys.js`).

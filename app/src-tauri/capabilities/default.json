@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for app windows",
-  "windows": ["overlay", "editor", "main", "settings"],
+  "windows": ["overlay", "badges", "editor", "main", "settings"],
   "permissions": [
     "core:default",
     "dialog:allow-open",
