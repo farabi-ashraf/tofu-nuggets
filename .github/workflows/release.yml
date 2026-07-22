@@ -20,7 +20,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      # One platform failing must not cancel the other's build; the draft can
+      # ship partially and the failed leg re-run.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest # NSIS installer + updater artifacts
+          - os: macos-latest # arm64 .dmg (ad-hoc signed) + updater artifacts
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -54,7 +62,15 @@ jobs:
           projectPath: app
           tagName: ${{ github.ref_name }}
           releaseName: "Tofu Nuggets ${{ github.ref_name }}"
-          releaseBody: "See the assets to download and install."
+          # Both matrix legs attach their assets to the same draft release and
+          # tauri-action merges the platform entries into one latest.json.
+          releaseBody: |
+            Windows: download and run the `.exe` installer.
+
+            macOS (Apple silicon): download the `.dmg`, drag the app to
+            Applications. Beta builds are not notarized — on first launch use
+            System Settings → Privacy & Security → "Open Anyway", and grant
+            the Accessibility permission (the app will point you there).
           # Create as a draft so the release is reviewed and published by hand
           # (publishing is the outward-facing step). The updater only sees it
           # once it is published as the latest release.

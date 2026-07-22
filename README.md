@@ -12,10 +12,12 @@ the desktop is the foreground window.
 
 ## Status
 
-**v0.2.0 — beta, Windows-only.** Installers are published on the
+**v0.3.0 — beta, Windows + macOS (Apple silicon).** Installers (Windows `.exe`,
+macOS `.dmg`) are published on the
 [Releases page](https://github.com/farabi-ashraf/tofu-nuggets/releases); installed
-copies self-update via the tray's "Check for updates…". A macOS port (Apple silicon)
-is in progress.
+copies self-update via the tray's "Check for updates…". macOS builds are beta:
+ad-hoc signed, not notarized — see [Platform](#platform) for the first-launch
+steps.
 
 ## Using Tofu Nuggets
 
@@ -93,11 +95,12 @@ cargo tauri build
 
 ## Platform
 
-Windows 10 and Windows 11. A macOS port (macOS 14+, Apple silicon) is under way:
-the codebase is single-branch with platform code behind traits/`#[cfg]`, and CI
-compiles and tests every change on both platforms — each CI run also uploads an
-ad-hoc-signed arm64 `.dmg` artifact for testing. Badges and icon-selection
-targeting are not ported yet.
+Windows 10 and Windows 11, plus macOS 14+ on Apple silicon (beta). The codebase
+is single-branch with platform code behind traits/`#[cfg]`; CI compiles and
+tests every change on both platforms, and releases ship both installers from
+the same tag. The full feature set — hover panel, hotkey capture (under cursor
+or selected icon), badges, editor, main list — runs on both; macOS behavior
+testing currently covers macOS 26 hardware, earlier versions via CI only.
 
 Beta macOS builds are ad-hoc signed but **not notarized**, so first launch needs
 System Settings → Privacy & Security → "Open Anyway". If macOS instead calls the

@@ -69,7 +69,7 @@
 | `app/src-tauri/tauri.conf.json` | Version (bump here + Cargo.toml to release), updater endpoint+pubkey, NSIS config |
 | `app/src-tauri/nsis/hooks.nsh` | Uninstaller message (notes stay on disk) |
 | `app/src-tauri/capabilities/default.json` | Webview permission grants (write-ops need explicit allows) |
-| `.github/workflows/release.yml` | Tag `v*` → build+sign → draft release + `latest.json` |
+| `.github/workflows/release.yml` | Tag `v*` → build+sign on Windows AND macOS matrix → draft release with `.exe` + arm64 `.dmg` + merged `latest.json` |
 | `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests). macOS job also uploads an ad-hoc-signed arm64 `.dmg` artifact (14-day retention) for hardware testing |
 | `spikes/` | Historical go/no-go spikes (hover-detect GO; badge-reparent NO-GO) with findings in their READMEs |
 | `%APPDATA%\com.tofunuggets.app\` (Windows) / `~/Library/Application Support/Tofu Nuggets/` (macOS) | settings.json, index.db, tofu.log (per-user runtime data; see `paths.rs`) |

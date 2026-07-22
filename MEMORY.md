@@ -185,8 +185,27 @@ Mini. Follow-ups from that run:
    step is the documented fallback (override
    `applicationShouldTerminateAfterLastWindowClosed` via objc2). If false ⇒
    find who hid them.
-3. **Release workflow macOS entry**: tag → signed dmg on the GitHub release, so
-   testers stop downloading CI artifacts. Needs a version bump decision (0.3.0).
+
+   **Second Mini run (owner, 2026-07-22, PR #26 merged): badge layer VERIFIED.**
+   Dots appear on annotated icons, clear on pause, hide behind Finder windows —
+   the layer-0 occluder filter was the fix. **Exit regression did NOT reproduce**:
+   new-note-then-close survived, census showed `overlay=true badges=true` after
+   the editor hid — so the always-visible badge window plausibly cured it as a
+   side effect (macOS may not have counted the *off-screen parked* panel; the
+   badge window is on-screen). Watch: if exit ever returns, census lines are in
+   place; objc2 delegate override remains the fallback. Startup log noise
+   `badges: list_icons failed: desktop icon container not found` once, ~2 s
+   after launch = Finder AX not ready yet; recovers next tick; harmless.
+   Leftover #2 CLOSED. Owner decision: staying on Windows dev machine (no move
+   to the Mac).
+3. **Release workflow macOS entry — PR `wip-release-mac` (2026-07-22)**:
+   release.yml now a fail-fast:false matrix (windows-latest + macos-latest);
+   both legs attach to the same draft, tauri-action merges platform entries
+   into one latest.json (updater gains darwin-aarch64). Release body carries
+   per-OS install notes (Gatekeeper "Open Anyway" for mac). Version bumped to
+   **0.3.0** (owner approved "go ahead with the release"). README: status +
+   platform sections rewritten for two-platform beta. After merge: tag
+   `v0.3.0` → CI builds draft → owner publishes.
 
 ## macOS hover: WORKS as of the third Mini run (2026-07-21)
 
