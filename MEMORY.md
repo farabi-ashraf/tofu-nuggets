@@ -4,9 +4,30 @@
 > continues without re-asking settled questions. **Update after every session where
 > decisions are made.** Detail older than the current line lives in git history.
 
-## Status (2026-07-20)
+## Status (2026-07-22)
 
-- **Current release: 0.1.3** — shipped through the CI pipeline, updater live-verified.
+- **Current release: 0.3.0 — PUBLISHED. First two-platform release; Route 1
+  (macOS port) COMPLETE.** Windows `.exe` + arm64 `.dmg` + updater artifacts
+  for both platforms from one tag. Owner updated existing installs on both
+  OSes (macOS via the in-app updater from the last test build — first live
+  macOS updater run, worked). All Route 1 leftovers closed: icon enumeration
+  (PR #23), badge layer (PRs #25/#26, Mini-verified), release matrix
+  (PRs #27/#28).
+- **Next-release backlog (owner, 2026-07-22)**:
+  1. App version shown on the main window.
+  2. Update dialog lists new features with a short description of each
+     (today it only asks install yes/no).
+  3. Main window: small "report bugs / request features" text pointing at
+     owner's email (ASK OWNER which address to publish before implementing);
+     clicking it shows a reminder that the app is in active development, so
+     some breakage is expected.
+- Open bugs parked: deleted-note-reappears (needs repro), external SSD
+  volumes not annotatable (deliberate no-fix), macOS exit regression
+  not reproduced since PR #26 (census logging stays in place).
+
+## Older status (2026-07-20)
+
+- **Release 0.1.3** — shipped through the CI pipeline, updater live-verified.
   Whole 0.1.x work order complete (`docs/V0.1.3.md`): A1–A4 fixes, B1 updater+CI,
   B3 delete-all + uninstall messaging, B4 publish gate. B2 (one branch, CI matrix) is a
   standing policy.
