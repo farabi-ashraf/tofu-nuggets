@@ -207,6 +207,15 @@ Mini. Follow-ups from that run:
    platform sections rewritten for two-platform beta. After merge: tag
    `v0.3.0` → CI builds draft → owner publishes.
 
+   **First v0.3.0 tag run FAILED on macOS leg (2026-07-22)**: `bundle.targets`
+   was `["nsis"]` — Windows-only, so the mac leg compiled but bundled NOTHING
+   and tauri-action errored "No artifacts were found" (the CI dmg job never
+   caught this because it passes `--bundles dmg` explicitly). Windows leg
+   succeeded and attached its assets to the draft. Fix PR
+   `wip-release-mac-targets`: targets `["nsis", "app", "dmg"]` (Tauri skips
+   non-native targets per platform; `app` produces the updater `.app.tar.gz`).
+   Recovery: merge fix → delete draft release + delete tag → re-tag v0.3.0.
+
 ## macOS hover: WORKS as of the third Mini run (2026-07-21)
 
 Hotkey opens the editor, note saved, **hover panel appears over a desktop icon** —

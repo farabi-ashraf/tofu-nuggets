@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "app", "dmg"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "publisher": "Tofu Nuggets",
     "shortDescription": "Hover notes for your desktop icons",
