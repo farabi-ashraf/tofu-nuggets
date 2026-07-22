@@ -216,6 +216,14 @@ Mini. Follow-ups from that run:
    non-native targets per platform; `app` produces the updater `.app.tar.gz`).
    Recovery: merge fix → delete draft release + delete tag → re-tag v0.3.0.
 
+   **Re-tag succeeded (2026-07-22)**: draft v0.3.0 complete — `.exe` + sig,
+   arm64 `.dmg`, `.app.tar.gz` + sig, and one merged latest.json with
+   `windows-x86_64` + `darwin-aarch64`. Awaiting owner review + publish.
+   **Route 1 leftovers all CLOSED once published.** Next-release reminder:
+   macOS in-app updater (0.3.0 → next) gets its first live test then; also
+   remember every macOS update re-prompts for the Accessibility grant
+   (ad-hoc signing).
+
 ## macOS hover: WORKS as of the third Mini run (2026-07-21)
 
 Hotkey opens the editor, note saved, **hover panel appears over a desktop icon** —
