@@ -164,6 +164,27 @@ Mini. Follow-ups from that run:
    icons, disappear under overlapping app windows / when paused / badges-off,
    click-through (dot doesn't eat desktop clicks), position correct on scaled
    resolution.
+
+   **First Mini run (owner, 2026-07-22, PR #25 merged): two failures.**
+   (a) **No dots ever drawn.** Diagnosis: `onscreen_window_rects` counted every
+   on-screen window — macOS keeps screen-covering agent windows (Notification
+   Center overlay etc.) on-screen at high `kCGWindowLayer` at all times, so the
+   "all displays covered" short-circuit always fired. Fix in
+   `wip-mac-badge-diag`: occluders = layer-0 windows only (menu bar/Dock no
+   longer occlude — matches Windows). Plus tofu.log diagnostics: badge window
+   create result + per-tick state summary (icons/annotated/occluders/dots or
+   why empty), logged on change only.
+   (b) **Exit regression: new-note-then-close kills the app again** when no
+   main/settings window open — despite parked panel AND visible badge window
+   (log: `editor hidden` → `exiting` 1 s later, no `exit requested`; same
+   no-visible-window signature as PR #20/21). Same flow was verified stable
+   after PR #21, so the badge window changed the equation somehow, or macOS
+   doesn't count either window. Discriminator added: CloseRequested now logs a
+   visible-window census (`label=is_visible` for every window). If census shows
+   panel/badges visible=true at kill time ⇒ AppKit doesn't count them; next
+   step is the documented fallback (override
+   `applicationShouldTerminateAfterLastWindowClosed` via objc2). If false ⇒
+   find who hid them.
 3. **Release workflow macOS entry**: tag → signed dmg on the GitHub release, so
    testers stop downloading CI artifacts. Needs a version bump decision (0.3.0).
 

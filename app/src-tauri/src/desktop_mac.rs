@@ -146,6 +146,7 @@ mod ffi {
         pub static kCGWindowOwnerPID: CFStringRef;
         pub static kCGWindowBounds: CFStringRef;
         pub static kCGWindowAlpha: CFStringRef;
+        pub static kCGWindowLayer: CFStringRef;
 
         pub fn AXIsProcessTrusted() -> Boolean;
         pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
@@ -705,10 +706,17 @@ pub fn display_bounds_pts() -> Vec<IconRect> {
 }
 
 /// Rects (points, global top-left origin) of every on-screen window that can
-/// cover a badge dot: other processes' windows plus the menu bar and Dock,
-/// excluding the desktop band (wallpaper + icons) and fully transparent
-/// windows. Our own windows are excluded to match the Windows badge layer —
-/// and because the parked panel must never count as an occluder.
+/// cover a badge dot: other processes' NORMAL windows only
+/// (`kCGWindowLayer == 0`). Layer filtering is load-bearing: macOS keeps
+/// screen-covering agent windows on-screen at higher layers at all times
+/// (Notification Center's overlay among them), and counting those as
+/// occluders made every display read as "fully covered" — the badge layer
+/// shipped in PR #25 never drew a single dot because of it. The cost is that
+/// the menu bar and Dock (layers ≠ 0) no longer occlude dots, which matches
+/// the Windows layer (its EnumWindows walk sees app windows only).
+/// Fully transparent windows are skipped, and our own windows are excluded —
+/// both to match Windows and because the parked panel must never count as an
+/// occluder.
 ///
 /// This is the CoreGraphics window list, not AX: it needs no Accessibility
 /// permission and one call returns every window with bounds already in
@@ -727,6 +735,15 @@ pub fn onscreen_window_rects() -> Vec<IconRect> {
         if !pid_ref.is_null()
             && unsafe { CFNumberGetValue(pid_ref, 3, &mut pid as *mut _ as *mut c_void) } != 0
             && pid == own_pid
+        {
+            continue;
+        }
+        let layer_ref = unsafe { CFDictionaryGetValue(win.0, kCGWindowLayer) };
+        let mut layer: i32 = 0;
+        // kCFNumberSInt32Type
+        if layer_ref.is_null()
+            || unsafe { CFNumberGetValue(layer_ref, 3, &mut layer as *mut _ as *mut c_void) } == 0
+            || layer != 0
         {
             continue;
         }
