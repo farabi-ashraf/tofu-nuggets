@@ -208,7 +208,23 @@ fn main() {
                     if let Some(win) = app.get_webview_window(&label) {
                         let _ = win.hide();
                     }
-                    logfile::log(app, &format!("window '{label}' hidden instead of closed"));
+                    // Visible-window census: macOS kills the app when it sees
+                    // no visible window, and a tester run died right after an
+                    // editor hide even though the parked panel AND the badge
+                    // window should both have been visible. This line shows
+                    // what each window reported at exactly that moment — the
+                    // discriminator between "our windows aren't actually
+                    // visible" and "AppKit doesn't count them".
+                    let census = app
+                        .webview_windows()
+                        .iter()
+                        .map(|(l, w)| format!("{l}={}", w.is_visible().unwrap_or(false)))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    logfile::log(
+                        app,
+                        &format!("window '{label}' hidden instead of closed; visible: {census}"),
+                    );
                 }
                 #[cfg(not(target_os = "macos"))]
                 tauri::WindowEvent::CloseRequested { .. } => {

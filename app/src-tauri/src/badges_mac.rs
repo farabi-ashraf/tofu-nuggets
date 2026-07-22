@@ -26,6 +26,11 @@
 //! (an app whose windows are all hidden gets terminated; the parked panel
 //! usually keeps one visible, but the badge layer must not depend on that).
 //!
+//! Diagnostics go to tofu.log: window creation result, and a one-line tick
+//! summary (icons/annotated/occluders/dots or the reason nothing is drawn)
+//! logged only when the state changes — hardware is the only place badges
+//! can be tested, so the log must say why dots were absent.
+//!
 //! The emit is unconditional every tick: the page may still be loading when
 //! the first dots are computed, and re-sending a tiny array each 2 s is
 //! cheaper than a pull command + stash. The page itself skips DOM work when
@@ -42,7 +47,7 @@ use tauri::{
 use crate::appstate::Paused;
 use crate::desktop_mac;
 use crate::icons::{DesktopIcons, IconRect};
-use crate::{settings, storage};
+use crate::{logfile, settings, storage};
 
 pub const LABEL: &str = "badges";
 
@@ -68,7 +73,7 @@ pub fn spawn(app: AppHandle, paused: Paused, settings: settings::Shared) {
                 }
             };
             if let Err(e) = run(&app, &icons, &paused, &settings) {
-                eprintln!("badge layer failed: {e}");
+                logfile::log(&app, &format!("badges: layer failed: {e}"));
             }
         })
         .expect("spawn badge layer");
@@ -80,13 +85,26 @@ fn run(
     paused: &Paused,
     settings: &settings::Shared,
 ) -> tauri::Result<()> {
-    let win = create(app)?;
+    let win = match create(app) {
+        Ok(w) => {
+            logfile::log(app, "badges: window created");
+            w
+        }
+        Err(e) => {
+            logfile::log(app, &format!("badges: window create FAILED: {e}"));
+            return Err(e);
+        }
+    };
     let mut screen = IconRect {
         left: 0,
         top: 0,
         right: 0,
         bottom: 0,
     };
+    // Last tick summary, logged only when it changes: one line per state
+    // change instead of one per 2 s, so tofu.log stays readable while still
+    // showing exactly why dots did or did not appear on hardware.
+    let mut last_summary = String::new();
 
     loop {
         std::thread::sleep(REFRESH);
@@ -98,24 +116,29 @@ fn run(
             place(app, &win, &screen);
         }
 
-        let dots = compute_dots(icons, paused, settings, &displays, &screen);
+        let (dots, summary) = compute_dots(icons, paused, settings, &displays, &screen);
+        if summary != last_summary {
+            logfile::log(app, &format!("badges: {summary}"));
+            last_summary = summary;
+        }
         let _ = app.emit("badges:update", dots);
     }
 }
 
+/// Dots plus a one-line state summary for the log (see `run`).
 fn compute_dots(
     icons: &desktop_mac::MacIcons,
     paused: &Paused,
     settings: &settings::Shared,
     displays: &[IconRect],
     screen: &IconRect,
-) -> Vec<Dot> {
+) -> (Vec<Dot>, String) {
     if paused.is_paused() {
-        return Vec::new();
+        return (Vec::new(), "paused".into());
     }
     let badges_on = settings.lock().map(|s| s.badges).unwrap_or(true);
     if !badges_on {
-        return Vec::new();
+        return (Vec::new(), "disabled in settings".into());
     }
 
     let occluders = desktop_mac::onscreen_window_rects();
@@ -126,19 +149,27 @@ fn compute_dots(
             .iter()
             .all(|d| occluders.iter().any(|w| covers(w, d)))
     {
-        return Vec::new();
+        return (
+            Vec::new(),
+            format!("all displays covered ({} occluders)", occluders.len()),
+        );
     }
 
-    let Ok(list) = icons.list_icons() else {
-        return Vec::new();
+    let list = match icons.list_icons() {
+        Ok(l) => l,
+        Err(e) => return (Vec::new(), format!("list_icons failed: {e}")),
     };
-    list.iter()
+    let annotated: Vec<_> = list
+        .iter()
         .filter(|ic| {
             ic.path
                 .as_ref()
                 .map(|p| storage::has_nugget(p))
                 .unwrap_or(false)
         })
+        .collect();
+    let dots: Vec<Dot> = annotated
+        .iter()
         .filter_map(|ic| {
             // Badge center: top-right corner of the icon cell, nudged inward
             // (same placement as the Windows layer).
@@ -156,7 +187,15 @@ fn compute_dots(
                 y: cy - screen.top,
             })
         })
-        .collect()
+        .collect();
+    let summary = format!(
+        "icons={} annotated={} occluders={} dots={}",
+        list.len(),
+        annotated.len(),
+        occluders.len(),
+        dots.len()
+    );
+    (dots, summary)
 }
 
 fn bounding_box(displays: &[IconRect]) -> IconRect {
