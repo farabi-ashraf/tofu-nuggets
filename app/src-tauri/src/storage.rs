@@ -106,6 +106,83 @@ pub fn has_nugget(item: &Path) -> bool {
             .unwrap_or(false)
 }
 
+/// How many items *inside* `folder` carry a note — what the Explorer pill
+/// shows (E2). Deliberately an on-demand read of that one folder, never a walk
+/// of an item tree: cost is one `.nuggets` listing, one listing of the folder
+/// (for sub-folders' own `_self` notes), and one listing of the redirect root's
+/// `.nuggets`, so it is independent of how many notes exist elsewhere.
+///
+/// `folder`'s own note (`<folder>/.nuggets/_self.nugget.json`) is about the
+/// folder, not about anything in it, so it does not count. Sidecars whose item
+/// no longer exists are skipped, matching the index's stale-sidecar rule.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn count_notes_in_folder(folder: &Path) -> usize {
+    let mut n = 0;
+
+    // File notes stored beside their items, plus any redirected sidecar that
+    // happens to live here but targets somewhere else (skipped by the parent
+    // check below).
+    if let Ok(entries) = std::fs::read_dir(folder.join(SIDECAR_DIR)) {
+        for e in entries.flatten() {
+            let sc = e.path();
+            let Some(fname) = sc.file_name().map(|f| f.to_string_lossy().to_string()) else {
+                continue;
+            };
+            let Some(item_name) = fname.strip_suffix(".nugget.json") else {
+                continue;
+            };
+            if item_name == "_self" {
+                continue;
+            }
+            let Some(nug) = read_sidecar_file(&sc) else {
+                continue;
+            };
+            let item = match &nug.target {
+                Some(t) => PathBuf::from(t),
+                None => folder.join(item_name),
+            };
+            if item.parent() == Some(folder) && item.exists() {
+                n += 1;
+            }
+        }
+    }
+
+    // Sub-folder notes travel inside the sub-folder.
+    if let Ok(entries) = std::fs::read_dir(folder) {
+        for e in entries.flatten() {
+            let dir = e.path();
+            if dir.file_name().map(|f| f == SIDECAR_DIR).unwrap_or(true) || !dir.is_dir() {
+                continue;
+            }
+            if dir.join(SIDECAR_DIR).join("_self.nugget.json").is_file() {
+                n += 1;
+            }
+        }
+    }
+
+    // Items whose own parent was unwritable have their sidecar in the redirect
+    // root; they are still notes *in this folder* from the user's point of view.
+    if let Some(root) = REDIRECT_ROOT.read().ok().and_then(|r| r.clone()) {
+        if root != folder {
+            if let Ok(entries) = std::fs::read_dir(root.join(SIDECAR_DIR)) {
+                for e in entries.flatten() {
+                    let Some(nug) = read_sidecar_file(&e.path()) else {
+                        continue;
+                    };
+                    let Some(target) = nug.target.as_ref().map(PathBuf::from) else {
+                        continue;
+                    };
+                    if target.parent() == Some(folder) && target.exists() {
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    n
+}
+
 #[allow(dead_code)] // used by the editor from Milestone 3; handy for seeding test data now
 pub fn write_nugget(item: &Path, nugget: &Nugget) -> std::io::Result<()> {
     let sc = sidecar_path(item)
@@ -336,6 +413,64 @@ mod tests {
 
         delete_nugget(&file).unwrap();
         assert!(!has_nugget(&file));
+        set_redirect_root(None);
+    }
+
+    // The Explorer pill's number: items in the folder that carry a note —
+    // files beside their sidecar, sub-folders carrying their own `_self`, and
+    // items whose sidecar had to be redirected. The folder's own note and
+    // sidecars belonging to other folders must not inflate it.
+    #[test]
+    fn folder_note_count_covers_files_subfolders_and_redirects() {
+        let _guard = REDIRECT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let redirect = tempfile::tempdir().unwrap();
+        set_redirect_root(Some(redirect.path().to_path_buf()));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path();
+        assert_eq!(count_notes_in_folder(folder), 0);
+
+        // Two annotated files, one un-annotated.
+        for name in ["a.txt", "b.txt", "plain.txt"] {
+            std::fs::write(folder.join(name), b"x").unwrap();
+        }
+        write_nugget(&folder.join("a.txt"), &nugget("<p>a</p>")).unwrap();
+        write_nugget(&folder.join("b.txt"), &nugget("<p>b</p>")).unwrap();
+
+        // An annotated sub-folder counts; a bare one does not.
+        let sub = folder.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        write_nugget(&sub, &nugget("<p>sub</p>")).unwrap();
+        std::fs::create_dir(folder.join("bare")).unwrap();
+
+        // The folder's own note is about the folder, not about its contents.
+        write_nugget(folder, &nugget("<p>self</p>")).unwrap();
+
+        // A redirected sidecar for an item that lives in this folder.
+        let redirected_item = folder.join("public.lnk");
+        std::fs::write(&redirected_item, b"x").unwrap();
+        let rsc = redirect_sidecar_path(&redirected_item).unwrap();
+        std::fs::create_dir_all(rsc.parent().unwrap()).unwrap();
+        let mut n = nugget("<p>redirected</p>");
+        n.target = Some(redirected_item.to_string_lossy().into_owned());
+        std::fs::write(&rsc, serde_json::to_string_pretty(&n).unwrap()).unwrap();
+
+        // A redirected sidecar for an item somewhere else must not be counted.
+        let foreign = tmp.path().join("elsewhere").join("other.txt");
+        std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
+        std::fs::write(&foreign, b"x").unwrap();
+        let frsc = redirect_sidecar_path(&foreign).unwrap();
+        let mut fnug = nugget("<p>foreign</p>");
+        fnug.target = Some(foreign.to_string_lossy().into_owned());
+        std::fs::write(&frsc, serde_json::to_string_pretty(&fnug).unwrap()).unwrap();
+
+        assert_eq!(count_notes_in_folder(folder), 4); // a, b, sub, public.lnk
+
+        // Deleting a note drops the count; a stale sidecar (item gone) too.
+        delete_nugget(&folder.join("a.txt")).unwrap();
+        std::fs::remove_file(folder.join("b.txt")).unwrap();
+        assert_eq!(count_notes_in_folder(folder), 2);
+
         set_redirect_root(None);
     }
 

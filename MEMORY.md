@@ -199,13 +199,54 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
   _UI_Shell_Common`. Accepted minor regression: desktop hover now gated to
   desktop-foreground (app-focused hover over a visible desktop gap no longer
   fires) — matches the documented "only while desktop foreground" intent.
-- **E2**: pill in count mode — create/track/destroy per window, acrylic
+- **E2**: pill in count mode — create/track/destroy per window, glassy
   styling, accessibility scaling, count refresh on navigation/tab switch.
+  **DONE — `wip-explorer-pill`, PR pending owner verification.** New
+  `pill.rs` (Windows-only) + `roots.rs`; `desktop.rs` gained
+  `explorer_windows()`/`explorer_is_foreground()`; `storage.rs` gained
+  `count_notes_in_folder`. Decisions taken while building:
+  - **GDI layered window per Explorer window, NOT a webview** — a WebView2
+    process tree per pill (times N windows) breaks the RAM budget. Cost of the
+    choice is hand-composited everything (rounded rect, border, accent dot,
+    digits via a GDI text coverage mask, since GDI writes no alpha).
+    **Measured: ~80 KB per pill** (two pills: WS 57.36 → 57.52 MB). Consequence
+    accepted: the "glass" is a translucent fill, not real acrylic —
+    `UpdateLayeredWindow` and DWM blur-behind don't compose.
+  - **Anchor is SHELLDLL_DefView, not `IShellBrowser::GetWindow`.** The latter
+    returns the whole ShellTabWindowClass (nav pane + status bar included) and
+    the first build put the pill on top of the status bar's view-mode buttons.
+    Fixed via `IShellView::GetWindow`; inset 12 logical px, minus `SM_CXVSCROLL`.
+  - **Active tab without a cursor (the E2 unknown)**: probe a point at 3/4 width,
+    1/2 height of the frame and walk *down* with `ChildWindowFromPointEx`, which
+    is unaffected by other apps covering the window (`WindowFromPoint` is not).
+    Falls back to visible-view then first-match.
+  - **Zero notes ⇒ pill hidden**, not "0".
+  - **Idle cost**: no Explorer window ⇒ no pill and no timer (measured 0 ms /
+    20 s). Foreground Explorer ⇒ 700 ms tick (shell enumeration + folder read);
+    unfocused Explorer ⇒ 2 s tick with no shell call and no disk read
+    (measured 15.6 ms / 25 s, debug build). Nothing is missed because
+    navigation/tab switch need focus, new/closed windows arrive as foreground
+    events, and the editor calls `pill::notes_changed()` on save/delete.
+  - Verified on hardware this session: pill renders with the right count,
+    minimize hides it / restore brings it back, two windows = two pills, an
+    empty folder's pill stays hidden, closing both windows leaves zero pill
+    HWNDs and the app alive. Left for owner: themes/contrast/font-scale looks,
+    navigation + tab-switch count updates, pause/badges-off, click-another-app
+    z-order.
 - **E3**: pill click → on-demand dots + all dismissal rules.
-- **Deferred design decision (decide at E2, don't overbuild)**: main-window
-  list/index scope once notes exist outside the desktop. Candidate: registry
-  of known roots, appended when a note is created elsewhere; watcher stays
-  desktop-only initially.
+- **Deferred design decision — DECIDED at E2 (implemented in the same PR)**:
+  main-window list/index scope for notes outside the desktop. **Chosen: known
+  roots.** `roots.rs` records the parent folder of every saved note in
+  `known_roots.json` (app-data); the startup index rebuild scans desktop dirs +
+  known roots; roots whose folder no longer exists are dropped on load. **The FS
+  watcher stays desktop-only** — an unbounded watched set is exactly the
+  background cost the budget forbids, and all it would buy is live index updates
+  for renames/deletes outside the desktop, which the next rebuild fixes.
+  Rejected: watching every known root (cost), indexing on hover (turns a read
+  path into a write), full-disk sidecar scan (minutes; indexes other people's
+  folders on shared machines). Rationale written into ARCHITECTURE §4. Residual
+  gap (documented in GLOSSARY): rename/delete of an off-desktop annotated item
+  while the app runs is only reflected after the next rebuild.
 
 macOS side of the big update unchanged: tags (M4) already cover Finder-window
 badges; AX hover inside Finder windows is a later phase (false-trigger bug

@@ -45,6 +45,13 @@ the editor.
 what has notes without hovering. Dots hide under any window that overlaps them and
 can be turned off in Settings.
 
+**Explorer count pill** *(Windows)* — every File Explorer window shows a small glassy
+chip in the bottom-right of its file list with the number of items in that folder
+that carry a note. It follows the window, tracks the active tab, disappears in
+folders with no notes, and is switched off by the same Settings badge toggle and by
+tray Pause. Clicking it does nothing yet — the next update turns it into a toggle
+that marks the annotated items.
+
 **Main window** — tray icon → "Open Tofu Nuggets" (or launching the app again)
 lists every nugget with filter and per-row Open / Edit / Delete. The danger zone in
 Settings can delete all notes at once.

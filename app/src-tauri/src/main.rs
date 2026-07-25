@@ -19,6 +19,9 @@ mod logfile;
 mod mainwin;
 mod overlay;
 mod paths;
+#[cfg(windows)]
+mod pill;
+mod roots;
 mod settings;
 mod storage;
 mod tray;
@@ -143,10 +146,18 @@ fn main() {
             storage::set_redirect_root(roots.first().cloned());
             let db_path = paths::data_dir(app.handle())?.join("index.db");
             let mut idx = index::NuggetIndex::open(&db_path)?;
-            if let Err(e) = idx.rebuild(&roots) {
+            // Notes created outside the desktop (E1's Explorer note-creation)
+            // would disappear from the list on restart if the rebuild only ever
+            // looked at the desktop — the folders they live in are recorded at
+            // save time (see roots.rs).
+            let mut scan_roots = roots.clone();
+            scan_roots.extend(roots::load(app.handle()));
+            if let Err(e) = idx.rebuild(&scan_roots) {
                 eprintln!("index rebuild failed: {e}");
             }
             let idx = Arc::new(Mutex::new(idx));
+            // The watcher stays desktop-only on purpose: watching every folder
+            // a note was ever made in is what the perf budget rules out.
             watcher::spawn(roots, idx.clone());
             app.manage(idx);
 
@@ -168,7 +179,10 @@ fn main() {
             let paused = app.state::<Paused>().inner().clone();
             hover::spawn(app.handle().clone(), paused.clone());
             #[cfg(windows)]
-            badges::spawn(paused, settings);
+            {
+                badges::spawn(paused.clone(), settings.clone());
+                pill::spawn(app.handle().clone(), paused, settings);
+            }
             #[cfg(target_os = "macos")]
             badges_mac::spawn(app.handle().clone(), paused, settings);
 

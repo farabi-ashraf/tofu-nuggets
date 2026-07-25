@@ -28,6 +28,14 @@
 //! (`WindowFromPoint`) — visibility does not distinguish them reliably. No
 //! tab-switch event exists, so the folder is read fresh on each hit-test.
 //!
+//! E2 adds `explorer_windows()` for the pill layer, which enumerates the same
+//! chain but must name the active tab of a window it is neither hovering nor
+//! focusing — so it cannot use the cursor at all. It probes a point in the
+//! middle of the frame's content area and walks *down* the child-window tree
+//! (`ChildWindowFromPointEx`), which answers "what does this frame put here"
+//! independently of z-order, unlike `WindowFromPoint`. Still no tab-switch
+//! event, so `pill.rs` polls.
+//!
 //! Infotips: the desktop trick (`suppress_desktop_infotips`, clearing
 //! `LVS_EX_INFOTIP`) targets a Win32 SysListView32. Modern Explorer content
 //! views (Win10 and Win11) are `DirectUIHWND`, not a ListView, so that message
@@ -41,6 +49,7 @@ use std::path::PathBuf;
 
 use windows::core::*;
 use windows::Win32::Foundation::{HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
@@ -352,6 +361,165 @@ impl DesktopIcons for DesktopUia {
             Some(Icon { name, rect, path })
         }
     }
+}
+
+/// One live File Explorer content window, as the pill layer sees it (E2).
+pub struct ExplorerWindow {
+    /// Top-level CabinetWClass window — the pill's owner.
+    pub top: HWND,
+    /// Active tab's SHELLDLL_DefView window — the item area proper. NOT
+    /// `IShellBrowser::GetWindow`, which returns the whole ShellTabWindowClass
+    /// (nav pane and status bar included); a pill placed against that rect
+    /// lands on top of the status bar's view-mode buttons.
+    pub view: HWND,
+    /// Active tab's current folder.
+    pub folder: PathBuf,
+}
+
+thread_local! {
+    /// Per-thread ShellWindows singleton for the free functions below (the
+    /// hover path keeps its own inside `DesktopUia`). COM objects are
+    /// apartment-bound, so this must not be a process-wide static.
+    static SHELL_WINDOWS: OnceCell<IShellWindows> = const { OnceCell::new() };
+}
+
+fn with_shell_windows<T>(f: impl FnOnce(&IShellWindows) -> T) -> Option<T> {
+    SHELL_WINDOWS.with(|cell| {
+        if cell.get().is_none() {
+            let s: IShellWindows =
+                unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_ALL) }.ok()?;
+            let _ = cell.set(s);
+        }
+        cell.get().map(f)
+    })
+}
+
+/// Deepest visible child window of `top` at a screen point, found by walking
+/// down the parent/child tree rather than by z-order.
+///
+/// `WindowFromPoint` would answer "which window is on screen there", so any
+/// other app covering Explorer breaks it; `ChildWindowFromPointEx` is relative
+/// to a parent and ignores unrelated processes entirely, which is what lets the
+/// pill identify the active tab of a window it is not hovering.
+fn deepest_child_at(top: HWND, pt_screen: POINT) -> HWND {
+    let mut cur = top;
+    for _ in 0..16 {
+        let mut p = pt_screen;
+        unsafe {
+            if !ScreenToClient(cur, &mut p).as_bool() {
+                break;
+            }
+            let child = ChildWindowFromPointEx(
+                cur,
+                p,
+                CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT,
+            );
+            if child.is_invalid() || child.0 == cur.0 {
+                break;
+            }
+            cur = child;
+        }
+    }
+    cur
+}
+
+/// A point inside the content area of an Explorer frame: three-quarters across
+/// (clear of the navigation pane) and halfway down (clear of the toolbar and
+/// the status bar).
+fn content_probe_point(top: HWND) -> Option<POINT> {
+    unsafe {
+        let mut rc = RECT::default();
+        GetClientRect(top, &mut rc).ok()?;
+        if rc.right <= rc.left || rc.bottom <= rc.top {
+            return None;
+        }
+        let mut pt = POINT {
+            x: rc.left + (rc.right - rc.left) * 3 / 4,
+            y: rc.top + (rc.bottom - rc.top) / 2,
+        };
+        if !ClientToScreen(top, &mut pt).as_bool() {
+            return None;
+        }
+        Some(pt)
+    }
+}
+
+/// Every File Explorer content window with a filesystem folder open, one entry
+/// per top-level window, reporting that window's ACTIVE tab.
+///
+/// Active-tab detection cannot reuse E1's method: that one asks which tab's
+/// view contains the cursor, and the pill has no cursor to assume (it must be
+/// right in an unfocused, un-hovered window). `IsWindowVisible` on the tab
+/// views is not a reliable discriminator either — E1 found covered tabs
+/// reporting visible, which resolved the wrong folder. What is used instead is
+/// geometric and cursor-free: probe a point in the middle of the frame's
+/// content area and walk *down* the child-window tree to whatever occupies it
+/// (`deepest_child_at`); only the active tab's view is mapped there, so the
+/// browser whose view is that window's ancestor is the active tab. The
+/// visible-view and first-match fallbacks below only run if that probe lands
+/// nowhere useful (e.g. a frame too small to have a content area).
+///
+/// No tab-switch or navigation event exists, so callers poll (see `pill.rs`).
+/// Non-filesystem folders (This PC, Recycle Bin) yield no path and are skipped
+/// — there is nothing there to annotate or count.
+pub fn explorer_windows() -> Vec<ExplorerWindow> {
+    let mut out: Vec<ExplorerWindow> = Vec::new();
+    with_shell_windows(|shell| unsafe {
+        let Ok(count) = shell.Count() else {
+            return;
+        };
+        // (top hwnd, best-so-far entry, whether that entry came from the probe)
+        let mut best: Vec<(isize, ExplorerWindow, bool)> = Vec::new();
+        for i in 0..count {
+            let Ok(disp) = shell.Item(&VARIANT::from(i)) else {
+                continue;
+            };
+            let Ok(sp) = disp.cast::<IServiceProvider>() else {
+                continue;
+            };
+            let Ok(browser) = sp.QueryService::<IShellBrowser>(&SID_STOP_LEVEL_BROWSER) else {
+                continue;
+            };
+            let Ok(tab) = browser.GetWindow() else {
+                continue;
+            };
+            let top = GetAncestor(tab, GA_ROOT);
+            if top.is_invalid() || class_of(top) != "CabinetWClass" {
+                continue;
+            }
+            let Some(folder) = folder_path_of(&browser) else {
+                continue;
+            };
+            // Tab identity is the browser's own window (it hosts everything in
+            // the tab); the pill's anchor is the narrower item area inside it.
+            let view = browser
+                .QueryActiveShellView()
+                .and_then(|v| v.GetWindow())
+                .unwrap_or(tab);
+            let active = content_probe_point(top)
+                .map(|pt| is_descendant(deepest_child_at(top, pt), tab))
+                .unwrap_or(false);
+            let entry = ExplorerWindow { top, view, folder };
+            match best.iter_mut().find(|(t, _, _)| *t == top.0 as isize) {
+                // A probe hit is definitive; anything else is a placeholder
+                // that a later probe hit (or nothing) replaces.
+                Some(slot) if active && !slot.2 => *slot = (top.0 as isize, entry, true),
+                Some(slot) if !slot.2 && IsWindowVisible(view).as_bool() => {
+                    slot.1 = entry;
+                }
+                Some(_) => {}
+                None => best.push((top.0 as isize, entry, active)),
+            }
+        }
+        out = best.into_iter().map(|(_, e, _)| e).collect();
+    });
+    out
+}
+
+/// Whether a File Explorer content window is the foreground window. The pill
+/// layer polls its folder/count only while this holds (perf budget).
+pub fn explorer_is_foreground() -> bool {
+    matches!(foreground_surface(), Surface::Explorer(_))
 }
 
 /// Current folder of a shell browser's active view, as a filesystem path.

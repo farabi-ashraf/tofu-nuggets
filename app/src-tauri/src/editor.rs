@@ -62,11 +62,19 @@ pub fn save_nugget(
         target: None,
     };
     storage::write_nugget(&item, &nugget).map_err(|e| e.to_string())?;
+    // Remember where this note lives so the next startup rebuild finds it: the
+    // index rebuild scans a root list, and off-desktop folders are only on it
+    // because a note was once saved there (roots.rs).
+    if let Some(parent) = item.parent() {
+        crate::roots::record(&app, parent);
+    }
     if let Ok(idx) = index.lock() {
         idx.upsert_item(&item);
     }
     // Let an open main window refresh its list.
     let _ = app.emit("nuggets:changed", ());
+    #[cfg(windows)]
+    crate::pill::notes_changed();
     Ok(false)
 }
 
@@ -90,6 +98,8 @@ fn remove_nugget(
         idx.remove_item(item);
     }
     let _ = app.emit("nuggets:changed", ());
+    #[cfg(windows)]
+    crate::pill::notes_changed();
     Ok(())
 }
 
