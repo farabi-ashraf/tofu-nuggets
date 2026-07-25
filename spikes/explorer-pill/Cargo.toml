@@ -1,0 +1,40 @@
+[package]
+name = "explorer-pill"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# E0 spike for the Explorer "pill" design (see MEMORY.md "Explorer update").
+# Three throwaway probes, one per open question. Read-only against Explorer.
+#   probe_a — IShellWindows enumeration + Win11 tab behavior
+#   probe_b — UIA item rects across view modes + visible-item filtering
+#   probe_c — GWL_HWNDPARENT owner-window z-order trick (+ WinEvent fallback)
+
+[[bin]]
+name = "probe_a"
+path = "src/bin/probe_a.rs"
+
+[[bin]]
+name = "probe_b"
+path = "src/bin/probe_b.rs"
+
+[[bin]]
+name = "probe_c"
+path = "src/bin/probe_c.rs"
+
+[dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+] }
+windows-core = "0.62"
