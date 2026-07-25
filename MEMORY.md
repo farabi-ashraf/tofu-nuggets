@@ -458,6 +458,7 @@ move-off-desktop-and-back relinks hover/badge instantly but list only after rest
 | Pricing | Free MVP, freemium later (owner's market research, 2026-07-17) |
 | Hosting | GitHub, single public repo, `main` + `wip-*` branches, PR-only merges |
 | Releases | Version-bump PR → tag `v*` → CI signed draft → owner publishes (docs/V0.1.3.md) |
+| Release notes | **Binding from v0.4.0**: every release body lists each new feature with a one-line description — `updater.rs` shows the body verbatim in the update dialog (docs/V0.1.3.md) |
 | Platform strategy | B2: never per-platform branches; `#[cfg]`/traits + CI matrix |
 | Docs strategy | Code = source of truth (`//!` headers); GLOSSARY.md mandatory-current |
 
