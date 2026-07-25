@@ -99,18 +99,89 @@ each with an explicit verification checklist.
    badges-off setting strips our tag from all files, re-tags on re-enable.
    Note-delete always removes the file's tag.
 
-**Phases**: ~~W1 taskbar-fix PR~~ (DONE, PR #31) → ~~W2 small-updates PR~~ (DONE,
-PR #33) — **both Windows phases verified on this machine; next is M3**, the first
-macOS phase → **M3 delegate-override + unpark PR** → M4 Finder-tags
-PR (batch Mini test runs — every CI build re-prompts the Accessibility grant under ad-hoc signing) →
-tag `v0.4.0` (both platforms, feature-list release body).
+**Phases (REORDERED by owner, 2026-07-25)**: ~~W1 taskbar-fix PR~~ (DONE, PR #31)
+→ ~~W2 small-updates PR~~ (DONE, PR #33) → **E-phases (Explorer-on-Windows
+update, pulled BEFORE the macOS phases — owner wants it built and tested on
+Windows now)** → M3 delegate-override + unpark PR → M4 Finder-tags PR (batch
+Mini test runs — every CI build re-prompts the Accessibility grant under ad-hoc
+signing). **Release packaging OPEN**: ship a Windows-only release after E vs
+hold one release for E+M3+M4 — owner decides once E is verified. Note: macOS
+0.3.0 bugs (stray window after sleep, dots traveling on Show Desktop) keep
+hurting until M3/M4 land — argument against delaying them long.
 
-**After v0.4.0 — next big update: Explorer/Finder integration.** macOS badge half
-already done via tags; remaining = AX hover inside Finder windows (false-trigger
-bug already on file). Windows = Route 3 as scoped (heavy: UIA over Explorer
-windows incl. Win11 tabs, per-window infotip suppression, perf budget). Explorer
-badge approach deliberately undecided; shell overlay stays rejected. **Parked
-further updates**: last-edit date display (cheap — `modified_ms` already stored),
+## Explorer update — the pill design (owner concept, confirmed 2026-07-25)
+
+Persistent full-desktop dot layer stays **desktop-only**. Inside Explorer
+windows a live-tracked overlay is deliberately rejected (scroll jitter,
+viewport clipping, Win11 tabs/multi-window churn). Instead, per Explorer
+window: a **pill** — small glassy acrylic toggle, styled like the app.
+
+- **Inactive**: shows the count of notes in the window's current folder
+  (on-demand read of that folder's `.nuggets` + redirected sidecars — no
+  watcher expansion needed for the count).
+- **Click**: draws dots over annotated *visible* items — a one-shot UIA
+  snapshot clipped to the client area, never live-tracked.
+- **Dots dismiss on ANY of**: scroll, focus loss, window move/resize,
+  folder/tab change. Snapshot model is the point — no tracking headaches.
+- **Placement (Claude decision, owner delegated)**: bottom-right of the
+  content area — above the status bar, left of the vertical scrollbar,
+  ~12 px inset (title-bar row rejected: Win11 tabs/search/ribbon states).
+  Follows the window via WinEvent LOCATIONCHANGE hook (same pattern as
+  badges.rs); hides on minimize/occlusion/foreground-loss.
+- **Z-order**: NOT global-TOPMOST (taskbar lesson). Candidate: set pill owner
+  to the Explorer hwnd (`SetWindowLongPtr GWL_HWNDPARENT`) so it rides above
+  that window only — cross-process ownership is quirky, spike it (E0).
+- **Scope assumption (flag to owner if wrong)**: "work inside Explorer" also
+  includes hover panel + hotkey note-creation on Explorer items (Route 3
+  core); the pill covers the badge half only.
+
+**E-phase breakdown (Opus-Low sized, each with verification checklist):**
+
+- **E0 spike (go/no-go, findings recorded in `spikes/`)**: (a) IShellWindows
+  enumeration + Win11 tab behavior (per-tab folder path; tabs may or may not
+  appear as separate entries — verify); (b) UIA item bounding rects across ALL
+  view modes (extra-large icons → details/list) + visible-item filtering;
+  (c) the GWL_HWNDPARENT pill z-order trick on Win11 26200 (+ Win10 later).
+  **DONE — `spikes/explorer-pill/`, PR pending; ALL THREE GO (Win11 26200,
+  2026-07-25). Read the README before E1.** Verdicts:
+  - **A GO**: `IShellWindows` → `IServiceProvider` → `IShellBrowser`
+    (SID_STopLevelBrowser) enumerates windows; folder path via active
+    `IShellView` → `IFolderView2::GetFolder(IPersistFolder2)` → `GetCurFolder`
+    PIDL (NOT a cast of IShellView — that fails). Save/Open dialogs (#32770) are
+    absent from `IShellWindows` for free; content windows are `CabinetWClass`.
+    Win11 tabs: designed read path = one entry per tab sharing the top HWND,
+    active tab = the one with `IsWindowVisible(view_hwnd)`; no switch event, so
+    POLL. Multi-tab active-folder readout is the one cosmetic OWNER-CONFIRM
+    (SendKeys tab-spawn was abandoned — leaked keystrokes).
+  - **B GO**: items view found by UIA control type (List/DataGrid → ListItem/
+    DataItem — not localizable names). Rects correct in all 8 modes; scrolled-out
+    items are ABSENT (virtualized), tree gives visible set + a 1-row `IsOffscreen`
+    fringe (list mode materializes all). Visible filter = `IsOffscreen==false` +
+    rect in client area. Cost ~90–145 ms for 120 items (cold≈warm; whole-window
+    `FindAll` dominates) = click→dots latency; E3 can shrink it by scoping
+    `ElementFromHandle` to the shell-view HWND.
+  - **C GO (owned)**: `SetWindowLongPtr(GWLP_HWNDPARENT)=Explorer` — popup stays
+    above owner, auto-hides on owner minimize, does NOT follow owner move (needs
+    `LOCATIONCHANGE` reposition, like badges.rs), SURVIVES owner close (no crash),
+    no Explorer interference. "Below an unrelated app" = standard owned semantics,
+    cosmetic OWNER-CONFIRM. WinEvent fallback built but unused (naive
+    `SetWindowPos(our, ex)` places BELOW — would need insert-above-predecessor).
+- **E1**: hover + hotkey inside Explorer windows — extend the UIA hit-test
+  path, per-window infotip suppression, polling gate becomes "desktop OR
+  Explorer window foreground" (README + ARCHITECTURE budget line update in
+  the same PR).
+- **E2**: pill in count mode — create/track/destroy per window, acrylic
+  styling, accessibility scaling, count refresh on navigation/tab switch.
+- **E3**: pill click → on-demand dots + all dismissal rules.
+- **Deferred design decision (decide at E2, don't overbuild)**: main-window
+  list/index scope once notes exist outside the desktop. Candidate: registry
+  of known roots, appended when a note is created elsewhere; watcher stays
+  desktop-only initially.
+
+macOS side of the big update unchanged: tags (M4) already cover Finder-window
+badges; AX hover inside Finder windows is a later phase (false-trigger bug
+already on file). Shell icon overlays stay rejected. **Parked further
+updates**: last-edit date display (cheap — `modified_ms` already stored),
 edit history (schema change, design later), telemetry (privacy + endpoint
 decision needed).
 
