@@ -372,8 +372,9 @@ pub struct ExplorerWindow {
     /// (nav pane and status bar included); a pill placed against that rect
     /// lands on top of the status bar's view-mode buttons.
     pub view: HWND,
-    /// Active tab's current folder.
-    pub folder: PathBuf,
+    /// Active tab's current folder; `None` for a non-filesystem one (This PC,
+    /// Recycle Bin) — nothing to count there.
+    pub folder: Option<PathBuf>,
 }
 
 thread_local! {
@@ -444,8 +445,8 @@ fn content_probe_point(top: HWND) -> Option<POINT> {
     }
 }
 
-/// Every File Explorer content window with a filesystem folder open, one entry
-/// per top-level window, reporting that window's ACTIVE tab.
+/// Every File Explorer content window, one entry per top-level window,
+/// reporting that window's ACTIVE tab.
 ///
 /// Active-tab detection cannot reuse E1's method: that one asks which tab's
 /// view contains the cursor, and the pill has no cursor to assume (it must be
@@ -456,20 +457,29 @@ fn content_probe_point(top: HWND) -> Option<POINT> {
 /// content area and walk *down* the child-window tree to whatever occupies it
 /// (`deepest_child_at`); only the active tab's view is mapped there, so the
 /// browser whose view is that window's ancestor is the active tab. The
-/// visible-view and first-match fallbacks below only run if that probe lands
-/// nowhere useful (e.g. a frame too small to have a content area).
+/// visible-view and first-match fallbacks only run if that probe lands nowhere
+/// useful (e.g. a frame too small to have a content area).
+///
+/// A tab on a non-filesystem folder (This PC, Recycle Bin — and Ctrl+T opens on
+/// This PC) reports `folder: None` rather than being dropped from the list. It
+/// has to stay: dropping it let the *other*, inactive tab win the fallback, so
+/// opening a new tab left the previous folder's count on screen.
 ///
 /// No tab-switch or navigation event exists, so callers poll (see `pill.rs`).
-/// Non-filesystem folders (This PC, Recycle Bin) yield no path and are skipped
-/// — there is nothing there to annotate or count.
 pub fn explorer_windows() -> Vec<ExplorerWindow> {
+    struct Tab {
+        view: HWND,
+        folder: Option<PathBuf>,
+        /// The content-area probe landed in this tab — definitive.
+        active: bool,
+        visible: bool,
+    }
     let mut out: Vec<ExplorerWindow> = Vec::new();
     with_shell_windows(|shell| unsafe {
         let Ok(count) = shell.Count() else {
             return;
         };
-        // (top hwnd, best-so-far entry, whether that entry came from the probe)
-        let mut best: Vec<(isize, ExplorerWindow, bool)> = Vec::new();
+        let mut groups: Vec<(HWND, Vec<Tab>)> = Vec::new();
         for i in 0..count {
             let Ok(disp) = shell.Item(&VARIANT::from(i)) else {
                 continue;
@@ -487,31 +497,38 @@ pub fn explorer_windows() -> Vec<ExplorerWindow> {
             if top.is_invalid() || class_of(top) != "CabinetWClass" {
                 continue;
             }
-            let Some(folder) = folder_path_of(&browser) else {
-                continue;
-            };
             // Tab identity is the browser's own window (it hosts everything in
             // the tab); the pill's anchor is the narrower item area inside it.
             let view = browser
                 .QueryActiveShellView()
                 .and_then(|v| v.GetWindow())
                 .unwrap_or(tab);
-            let active = content_probe_point(top)
-                .map(|pt| is_descendant(deepest_child_at(top, pt), tab))
-                .unwrap_or(false);
-            let entry = ExplorerWindow { top, view, folder };
-            match best.iter_mut().find(|(t, _, _)| *t == top.0 as isize) {
-                // A probe hit is definitive; anything else is a placeholder
-                // that a later probe hit (or nothing) replaces.
-                Some(slot) if active && !slot.2 => *slot = (top.0 as isize, entry, true),
-                Some(slot) if !slot.2 && IsWindowVisible(view).as_bool() => {
-                    slot.1 = entry;
-                }
-                Some(_) => {}
-                None => best.push((top.0 as isize, entry, active)),
+            let entry = Tab {
+                view,
+                folder: folder_path_of(&browser),
+                active: content_probe_point(top)
+                    .map(|pt| is_descendant(deepest_child_at(top, pt), tab))
+                    .unwrap_or(false),
+                visible: IsWindowVisible(view).as_bool(),
+            };
+            match groups.iter_mut().find(|(t, _)| t.0 == top.0) {
+                Some((_, tabs)) => tabs.push(entry),
+                None => groups.push((top, vec![entry])),
             }
         }
-        out = best.into_iter().map(|(_, e, _)| e).collect();
+        for (top, tabs) in groups {
+            let pick = tabs
+                .iter()
+                .position(|t| t.active)
+                .or_else(|| tabs.iter().position(|t| t.visible && t.folder.is_some()))
+                .or_else(|| tabs.iter().position(|t| t.folder.is_some()))
+                .unwrap_or(0);
+            out.push(ExplorerWindow {
+                top,
+                view: tabs[pick].view,
+                folder: tabs[pick].folder.clone(),
+            });
+        }
     });
     out
 }
@@ -520,6 +537,30 @@ pub fn explorer_windows() -> Vec<ExplorerWindow> {
 /// layer polls its folder/count only while this holds (perf budget).
 pub fn explorer_is_foreground() -> bool {
     matches!(foreground_surface(), Surface::Explorer(_))
+}
+
+/// Visible top-level File Explorer windows, by window class alone — no COM, no
+/// UIA, just an `EnumWindows` pass.
+///
+/// This is the pill layer's cheap "is there anything I should be looking at"
+/// probe. It matters because a window shows up here the instant it is created,
+/// while `explorer_windows()` cannot see it until the shell has built its
+/// browser and view; a pill layer that decided from the expensive enumeration
+/// alone would conclude "no windows, stop polling" during exactly that gap and
+/// never come back.
+pub fn explorer_top_windows() -> Vec<HWND> {
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = unsafe { &mut *(lparam.0 as *mut Vec<HWND>) };
+        if unsafe { IsWindowVisible(hwnd) }.as_bool() && class_of(hwnd) == "CabinetWClass" {
+            out.push(hwnd);
+        }
+        BOOL(1)
+    }
+    let mut out: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(enum_cb), LPARAM(&mut out as *mut _ as isize));
+    }
+    out
 }
 
 /// Current folder of a shell browser's active view, as a filesystem path.

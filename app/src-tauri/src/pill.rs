@@ -27,13 +27,24 @@
 //! so a `LOCATIONCHANGE` WinEvent hook repositions it and a liveness check
 //! destroys it once the owner is gone.
 //!
-//! **Idle cost.** No pill exists until an Explorer window does, and no timer
-//! runs then either. New windows are discovered from `EVENT_SYSTEM_FOREGROUND`;
-//! while one is foreground the tick runs at `FAST_MS` (folder/tab changes are
-//! poll-only — no shell event reports either), and it drops to `SLOW_MS` when
-//! focus leaves, where it does nothing but check the owners are still alive.
+//! **Idle cost.** With no Explorer window and none foreground there is no pill
+//! and no timer at all. New windows are discovered from
+//! `EVENT_SYSTEM_FOREGROUND`; while one is foreground the tick runs at
+//! `FAST_MS` and re-enumerates the shell (folder and tab changes are poll-only
+//! — no event reports either), and it drops to `SLOW_MS` when focus leaves,
+//! where it only checks the owners are still alive and re-places the pills.
 //! Pause and badges-off destroy every pill and stop the tick outright; the next
 //! Explorer foreground event brings them back.
+//!
+//! The foreground tick stays armed even when a pass produced no pill: a window
+//! opened from our own main-window "Open" button is already foreground before
+//! its shell view exists, so the first sync sees nothing and the pill would
+//! never appear until the user clicked away and back.
+//!
+//! Window moves are a separate, cheaper path (`MOVE_TIMER` → `cheap_pass`):
+//! nothing about a drag can change which windows exist or what is in their
+//! folders, and running the shell enumeration at drag cadence is what made the
+//! pill visibly trail the window.
 //!
 //! The count itself is `storage::count_notes_in_folder` — a read of that one
 //! folder. No UIA and no item enumeration is involved in count mode; that is
@@ -68,10 +79,18 @@ use crate::{settings, storage};
 const FAST_MS: u32 = 700;
 const SLOW_MS: u32 = 2000;
 const TICK_TIMER: usize = 1;
-/// One-shot coalescing timer for `LOCATIONCHANGE` bursts (a window drag fires
-/// dozens per second).
+/// One-shot timer for `LOCATIONCHANGE` bursts (a window drag fires dozens per
+/// second). It does placement only — never a shell call.
 const MOVE_TIMER: usize = 2;
-const MOVE_DELAY_MS: u32 = 60;
+/// How closely a pill tracks a window being dragged. Re-arming an already-armed
+/// timer would just reset it, so a continuous drag would keep pushing the fire
+/// out and the pill would only catch up when the drag paused — hence
+/// `MOVE_ARMED` below, which lets it fire at this cadence throughout.
+const MOVE_DELAY_MS: u32 = 30;
+/// One-shot timer for events that need the full shell re-enumeration: a
+/// foreground switch, or a note being saved.
+const FULL_TIMER: usize = 3;
+const FULL_DELAY_MS: u32 = 60;
 
 /// Gap between the pill and the content area's bottom/right edges, in logical
 /// px (scaled by the owner's DPI). The scrollbar width is subtracted on top.
@@ -82,6 +101,13 @@ const MGR_CLASS: PCWSTR = w!("TofuNuggetsPillManager");
 
 /// Manager window handle, for the WinEvent callbacks (single instance).
 static MGR_HWND: AtomicIsize = AtomicIsize::new(0);
+/// Whether `MOVE_TIMER` is already armed. Without this the reposition timer
+/// starves during a drag (see `MOVE_DELAY_MS`).
+static MOVE_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How many pills exist, readable from the hook threads. The move hook is
+/// pure overhead when there is nothing to re-place, and `EVENT_OBJECT_LOCATIONCHANGE`
+/// fires for every window on the desktop, not just Explorer's.
+static PILL_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// Set by the foreground hook: the next sync must re-enumerate the shell
 /// instead of taking the cheap unfocused path. A window that just closed or
 /// just opened is only visible to the enumeration.
@@ -110,7 +136,7 @@ struct Pill {
     /// Active tab's shell view; its screen rect is the content area.
     view: HWND,
     hwnd: HWND,
-    folder: PathBuf,
+    folder: Option<PathBuf>,
     count: usize,
     /// Last pushed appearance + placement; a tick that changes neither skips
     /// the redraw entirely.
@@ -124,7 +150,18 @@ struct Mgr {
     pills: Vec<Pill>,
     /// Whether the tick timer is currently armed, and at which cadence.
     tick: Option<u32>,
+    /// Ticks of grace left after a foreground change. A window that just opened
+    /// is not immediately enumerable — the shell needs a moment to build its
+    /// browser and view — so a sync fired right after the event legitimately
+    /// finds nothing. Without this the layer concluded "nothing to watch",
+    /// disarmed, and the pill only turned up if another foreground event
+    /// happened to land later (owner-reported: no pill after the main window's
+    /// Open button until you clicked away and back).
+    settle: u8,
 }
+
+/// Foreground-change grace: how many `FAST_MS` ticks to keep looking.
+const SETTLE_TICKS: u8 = 5;
 
 fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()> {
     unsafe {
@@ -166,6 +203,7 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
             settings,
             pills: Vec::new(),
             tick: None,
+            settle: SETTLE_TICKS,
         }));
         SetWindowLongPtrW(mgr_hwnd, GWLP_USERDATA, mgr as isize);
 
@@ -220,25 +258,43 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
 unsafe extern "system" fn fg_event(
     _hook: HWINEVENTHOOK,
     _event: u32,
-    _hwnd: HWND,
+    hwnd: HWND,
     idobject: i32,
     idchild: i32,
     _thread: u32,
     _time: u32,
 ) {
-    if idobject != OBJID_WINDOW.0 || idchild != 0 {
+    if idobject != OBJID_WINDOW.0 || idchild != 0 || hwnd.is_invalid() {
         return;
     }
-    FORCE_FULL.store(true, Ordering::Release);
+    // Filter by class here rather than in the sync. Foreground changes are
+    // constant on a busy desktop, and an unfiltered hook opened the
+    // shell-enumeration grace window (see `settle`) on every one of them —
+    // measurably burning CPU with no Explorer window open anywhere.
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
+    if String::from_utf16_lossy(&buf[..n]) == "CabinetWClass" {
+        // Explorer gained focus: it may be a window that opened this instant
+        // and is not enumerable yet, so ask for the grace window.
+        FORCE_FULL.store(true, Ordering::Release);
+        arm_full();
+    } else if PILL_COUNT.load(Ordering::Acquire) > 0 {
+        // Focus went elsewhere while pills exist: worth one pass to drop the
+        // tick cadence and re-place them, but nothing needs re-enumerating.
+        arm_full();
+    }
+}
+
+/// Ask for a full sync shortly. Coalescing here is plain timer reset: bursts of
+/// foreground changes should collapse into one enumeration.
+fn arm_full() {
     let mgr = MGR_HWND.load(Ordering::Acquire);
     if mgr != 0 {
-        // Coalesced through the same one-shot timer: a foreground switch is
-        // also a reason to re-place the pills.
         unsafe {
             SetTimer(
                 Some(HWND(mgr as *mut core::ffi::c_void)),
-                MOVE_TIMER,
-                MOVE_DELAY_MS,
+                FULL_TIMER,
+                FULL_DELAY_MS,
                 None,
             );
         }
@@ -262,8 +318,11 @@ unsafe extern "system" fn move_event(
     if unsafe { GetAncestor(hwnd, GA_ROOT) } != hwnd {
         return;
     }
+    if PILL_COUNT.load(Ordering::Acquire) == 0 {
+        return;
+    }
     let mgr = MGR_HWND.load(Ordering::Acquire);
-    if mgr != 0 {
+    if mgr != 0 && !MOVE_ARMED.swap(true, Ordering::AcqRel) {
         unsafe {
             SetTimer(
                 Some(HWND(mgr as *mut core::ffi::c_void)),
@@ -281,9 +340,21 @@ unsafe extern "system" fn mgr_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             with_mgr(hwnd, |m| sync(hwnd, m));
             LRESULT(0)
         }
+        // A window moved or resized. Placement only: nothing about a drag can
+        // change which windows exist or what is in their folders, and running
+        // the shell enumeration at drag cadence is what made the pill lag
+        // behind the window.
         WM_TIMER if wp.0 == MOVE_TIMER => {
             unsafe {
                 let _ = KillTimer(Some(hwnd), MOVE_TIMER);
+            }
+            MOVE_ARMED.store(false, Ordering::Release);
+            with_mgr(hwnd, cheap_pass);
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == FULL_TIMER => {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), FULL_TIMER);
             }
             with_mgr(hwnd, |m| sync(hwnd, m));
             LRESULT(0)
@@ -315,7 +386,8 @@ unsafe extern "system" fn pill_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                         .pills
                         .iter()
                         .find(|p| p.hwnd == hwnd)
-                        .map(|p| p.folder.display().to_string())
+                        .and_then(|p| p.folder.as_ref())
+                        .map(|f| f.display().to_string())
                         .unwrap_or_else(|| "<unknown>".into());
                     crate::logfile::log(
                         &m.app,
@@ -343,45 +415,69 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
         // than idle a timer. The next Explorer foreground event restarts us,
         // which is also the first moment a pill could be seen again.
         destroy_all(m);
+        PILL_COUNT.store(0, Ordering::Release);
         set_tick(mgr_hwnd, m, None);
         return;
     }
 
     let fg = desktop::explorer_is_foreground();
-    // The shell enumeration is the only expensive thing here, and nothing it
-    // discovers can change while the user is looking elsewhere: navigation and
-    // tab switches need focus, and a new window arrives as a foreground event.
-    // So an unfocused tick skips it and just keeps the existing pills honest.
-    if !fg && !m.pills.is_empty() && !FORCE_FULL.swap(false, Ordering::AcqRel) {
-        cheap_pass(m);
-        set_tick(mgr_hwnd, m, Some(SLOW_MS));
-        return;
+    // Cheap class-only scan (no COM): what Explorer windows exist right now.
+    let tops = desktop::explorer_top_windows();
+
+    // A foreground change (or a note being saved) opens a grace window: the
+    // thing it is telling us about may not be enumerable yet.
+    if FORCE_FULL.swap(false, Ordering::AcqRel) {
+        m.settle = SETTLE_TICKS;
     }
-    FORCE_FULL.store(false, Ordering::Release);
+    // The expensive shell enumeration is worth running when the user is looking
+    // at Explorer, when a window exists that we have no pill for yet, when a
+    // pill outlived its window, or while a grace window is open. Otherwise
+    // nothing it could discover has changed: navigation and tab switches both
+    // need focus.
+    let full = fg
+        || m.settle > 0
+        || tops.iter().any(|t| !m.pills.iter().any(|p| p.top == *t))
+        || m.pills.iter().any(|p| !tops.contains(&p.top));
+    // The grace window is spent by looking, not by the clock, so this counts
+    // down here and nowhere else — an earlier version decremented only on one
+    // of two exit paths and the tick then never disarmed at all.
+    m.settle = m.settle.saturating_sub(1);
 
-    let windows = desktop::explorer_windows();
-
-    // Drop pills whose owner is gone or no longer reports a folder. An owned
-    // popup survives its owner's death (E0), so this is what prevents orphans.
-    let live: Vec<isize> = windows.iter().map(|w| w.top.0 as isize).collect();
-    m.pills.retain(|p| {
-        let keep = unsafe { IsWindow(Some(p.top)).as_bool() } && live.contains(&(p.top.0 as isize));
-        if !keep {
-            unsafe {
-                let _ = DestroyWindow(p.hwnd);
+    if full {
+        let windows = desktop::explorer_windows();
+        // Drop pills whose owner is gone or no longer reports a folder. An
+        // owned popup survives its owner's death (E0), so this is what prevents
+        // orphans.
+        let live: Vec<isize> = windows.iter().map(|w| w.top.0 as isize).collect();
+        m.pills.retain(|p| {
+            let keep =
+                unsafe { IsWindow(Some(p.top)).as_bool() } && live.contains(&(p.top.0 as isize));
+            if !keep {
+                unsafe {
+                    let _ = DestroyWindow(p.hwnd);
+                }
             }
+            keep
+        });
+        for w in &windows {
+            upsert(m, w);
         }
-        keep
-    });
-
-    for w in &windows {
-        upsert(m, w);
+    } else {
+        cheap_pass(m);
     }
 
-    let cadence = if m.pills.is_empty() {
-        None
-    } else if fg {
+    // Cadence keys off Explorer windows EXISTING, not off pills existing. A
+    // window opened from our own main-window "Open" button is listed by the
+    // class scan immediately but has no shell view for a moment, so the first
+    // sync produces no pill; keying the timer off pills left it that way until
+    // the user clicked away and back (owner-reported). Once no Explorer window
+    // is open at all there is again no timer whatsoever, which is what the idle
+    // budget asks for.
+    PILL_COUNT.store(m.pills.len(), Ordering::Release);
+    let cadence = if fg || m.settle > 0 {
         Some(FAST_MS)
+    } else if tops.is_empty() && m.pills.is_empty() {
+        None
     } else {
         Some(SLOW_MS)
     };
@@ -410,19 +506,8 @@ fn set_tick(mgr_hwnd: HWND, m: &mut Mgr, ms: Option<u32>) {
 /// away from the Explorer window whose pill needs updating, so the unfocused
 /// path would otherwise not notice until the user clicked back.
 pub fn notes_changed() {
-    let mgr = MGR_HWND.load(Ordering::Acquire);
-    if mgr == 0 {
-        return;
-    }
     FORCE_FULL.store(true, Ordering::Release);
-    unsafe {
-        SetTimer(
-            Some(HWND(mgr as *mut core::ffi::c_void)),
-            MOVE_TIMER,
-            MOVE_DELAY_MS,
-            None,
-        );
-    }
+    arm_full();
 }
 
 /// Unfocused upkeep, deliberately free of shell calls and of disk reads: drop
@@ -439,6 +524,7 @@ fn cheap_pass(m: &mut Mgr) {
         }
         keep
     });
+    PILL_COUNT.store(m.pills.len(), Ordering::Release);
     for idx in 0..m.pills.len() {
         render(m, idx);
     }
@@ -464,7 +550,7 @@ fn upsert(m: &mut Mgr, w: &ExplorerWindow) {
                 top: w.top,
                 view: w.view,
                 hwnd,
-                folder: PathBuf::new(),
+                folder: None,
                 count: 0,
                 drawn: None,
             });
@@ -477,7 +563,13 @@ fn upsert(m: &mut Mgr, w: &ExplorerWindow) {
     // time regardless: notes also appear and vanish under a folder that never
     // moved.
     m.pills[idx].folder = w.folder.clone();
-    m.pills[idx].count = storage::count_notes_in_folder(&w.folder);
+    // A non-filesystem tab (This PC, and that is what Ctrl+T opens on) counts
+    // as nothing to show, not as "keep the last number".
+    m.pills[idx].count = w
+        .folder
+        .as_ref()
+        .map(|f| storage::count_notes_in_folder(f))
+        .unwrap_or(0);
     m.pills[idx].view = w.view;
     render(m, idx);
 }

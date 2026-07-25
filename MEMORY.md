@@ -221,18 +221,46 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
     is unaffected by other apps covering the window (`WindowFromPoint` is not).
     Falls back to visible-view then first-match.
   - **Zero notes ⇒ pill hidden**, not "0".
-  - **Idle cost**: no Explorer window ⇒ no pill and no timer (measured 0 ms /
-    20 s). Foreground Explorer ⇒ 700 ms tick (shell enumeration + folder read);
-    unfocused Explorer ⇒ 2 s tick with no shell call and no disk read
-    (measured 15.6 ms / 25 s, debug build). Nothing is missed because
-    navigation/tab switch need focus, new/closed windows arrive as foreground
-    events, and the editor calls `pill::notes_changed()` on save/delete.
+  - **Idle cost**: no Explorer window ⇒ no timer at all; foreground Explorer ⇒
+    700 ms tick (shell enumeration + folder read) plus a short grace window
+    after Explorer gains focus; unfocused Explorer ⇒ 2 s tick with no shell
+    call and no disk read. Nothing is missed because navigation/tab switch need
+    focus, new/closed windows are caught by a class-only `EnumWindows` scan,
+    and the editor calls `pill::notes_changed()` on save/delete.
+  - **Perf-measurement trap (cost a cycle)**: whole-process CPU is dominated by
+    the BADGE layer's 2 s UIA walk, which short-circuits only while a window
+    covers the whole virtual screen — the same build reads 0 ms or 250 ms per
+    25 s depending only on whether the desktop is covered. The pill's real cost
+    was isolated by building with `pill::spawn` removed: **250 ms / 25 s without
+    it vs 218–234 ms with it** — inside the noise. Always isolate this way
+    before making a budget claim.
+  - **Three bugs found by the owner on the first hardware run, all fixed in the
+    same branch:**
+    1. **No pill after the main window's Open button** until you clicked away
+       and back. A window that just opened is not enumerable through
+       `IShellWindows` for a moment, so the first sync found nothing — and the
+       tick cadence was keyed off *pills existing*, so it disarmed and never
+       retried. Fixed three ways: cadence now keys off Explorer windows
+       existing (cheap class-only `EnumWindows`, which sees a window instantly);
+       a `settle` grace window keeps polling for ~5 ticks after Explorer gains
+       focus; and the full path also runs whenever a window has no pill yet.
+    2. **New tab (Ctrl+T, opens on This PC) kept the previous tab's count.**
+       `explorer_windows()` dropped entries with no filesystem folder, which let
+       the *inactive* tab win the fallback. Now `folder: Option<PathBuf>` and a
+       non-filesystem active tab hides the pill.
+    3. **Lag when moving/resizing.** Every `LOCATIONCHANGE` reset the coalescing
+       timer, so during a continuous drag it never fired; and each fire ran the
+       full shell enumeration. Now a `MOVE_ARMED` flag lets it fire throughout
+       the drag at 30 ms, and the move path does placement only — no shell call.
+    Regression-tested after the fixes: new window gets its pill within 1.2 s
+    with no refocus; pill-to-window gap stays constant (35/36 px) across a
+    15-step drag; This PC window's pill hidden while the folder window's stays
+    visible; minimize/restore; all-closed leaves zero pill HWNDs.
   - Verified on hardware this session: pill renders with the right count,
     minimize hides it / restore brings it back, two windows = two pills, an
     empty folder's pill stays hidden, closing both windows leaves zero pill
-    HWNDs and the app alive. Left for owner: themes/contrast/font-scale looks,
-    navigation + tab-switch count updates, pause/badges-off, click-another-app
-    z-order.
+    HWNDs and the app alive. Owner confirmed on the first run: count correct,
+    follows move + resize, themes/contrast/settings/restart all fine.
 - **E3**: pill click → on-demand dots + all dismissal rules.
 - **Deferred design decision — DECIDED at E2 (implemented in the same PR)**:
   main-window list/index scope for notes outside the desktop. **Chosen: known
