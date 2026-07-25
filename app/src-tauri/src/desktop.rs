@@ -16,12 +16,13 @@
 //! current folder, read via the chain IShellWindows → IShellBrowser
 //! (SID_STopLevelBrowser) → IFolderView2.
 //!
-//! Two things the E0 spike could not verify, pinned on real hardware (E1):
-//! - **Apartment**: this chain is STA-only. From an MTA thread
-//!   `IShellBrowser::GetWindow` fails (0x8001010D) and nothing resolves, so the
-//!   worker threads init COM as STA (`init_com_for_thread`).
-//! - **ElementFromPoint** lands on a child of the row (a column cell / label),
-//!   not the item, so `item_ancestor` climbs to the ListItem/DataItem.
+//! Two things the E0 spike could not verify, pinned on real hardware (E1).
+//! Apartment: this chain is STA-only — from an MTA thread
+//! `IShellBrowser::GetWindow` fails (0x8001010D) and nothing resolves, so the
+//! worker threads init COM as STA (`init_com_for_thread`). Hit target:
+//! `ElementFromPoint` lands on a child of the row (a column cell / label), not
+//! the item, so `item_ancestor` climbs to the ListItem/DataItem.
+//!
 //! Win11 tabs each surface as their own IShellBrowser sharing one top HWND; the
 //! active tab is the one whose view window contains the cursor
 //! (`WindowFromPoint`) — visibility does not distinguish them reliably. No
