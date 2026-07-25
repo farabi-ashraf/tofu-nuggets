@@ -243,6 +243,14 @@ body.drop-target::after {
   accent-color: var(--accent);
 }
 
+/* Done items read as done at a glance. Only the text is struck (the checkbox
+   lives outside this div), and the dim comes from --fg-dim, which collapses to
+   --fg under high contrast — there the line alone carries the state. */
+.note-editor ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--fg-dim);
+}
+
 .note-editor a {
   color: var(--accent);
 }

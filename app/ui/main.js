@@ -129,6 +129,31 @@ if (footHint) {
     "To remove them all, use Settings → Delete all notes.";
 }
 
+// Version comes from tauri.conf.json via the app API, so it can never drift
+// from what shipped. Granted by core:default (→ core:app:default), no extra
+// capability entry needed.
+const versionEl = document.getElementById("app-version");
+if (versionEl) {
+  window.__TAURI__.app
+    .getVersion()
+    .then((v) => {
+      versionEl.textContent = `Version ${v}`;
+    })
+    .catch(() => {});
+}
+
+// The notice is plain in-page text: window.alert/confirm/prompt are not
+// implemented by WKWebView, so they must never be used in this UI.
+const reportToggle = document.getElementById("report-toggle");
+const reportNote = document.getElementById("report-note");
+if (reportToggle && reportNote) {
+  reportToggle.addEventListener("click", () => {
+    const showing = reportNote.hidden;
+    reportNote.hidden = !showing;
+    reportToggle.setAttribute("aria-expanded", showing ? "true" : "false");
+  });
+}
+
 // Seed the hotkey hint immediately, then sync from settings and keep it live.
 renderHotkey();
 invoke("get_settings")

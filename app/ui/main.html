@@ -20,8 +20,22 @@
       No notes yet. Hover a desktop icon and press <span id="hotkey-keys"></span> to add one.
     </p>
   </main>
-  <!-- Wording finished by main.js: how the app is removed differs per platform. -->
-  <footer class="foot-hint" id="foot-hint"></footer>
+  <footer class="foot">
+    <!-- Wording finished by main.js: how the app is removed differs per platform. -->
+    <p id="foot-hint"></p>
+    <p class="foot-meta">
+      <span id="app-version"></span>
+      <button type="button" id="report-toggle" class="linkish" aria-expanded="false" aria-controls="report-note">
+        Report bugs / request features
+      </button>
+    </p>
+    <!-- In-page: window.alert/confirm/prompt are not implemented by WKWebView. -->
+    <p class="report-note" id="report-note" hidden>
+      Tofu Nuggets is in active development, so some breakage is expected.
+      Bug reports and feature requests are welcome at
+      <span class="report-mail">farabigithub@gmail.com</span>.
+    </p>
+  </footer>
   <script type="module" src="main.js"></script>
 </body>
 </html>

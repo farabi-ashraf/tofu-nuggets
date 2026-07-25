@@ -174,6 +174,13 @@ h1 {
   cursor: pointer;
 }
 
+/* Matches the editor: struck + dimmed text only, checkbox untouched. Under
+   high contrast --fg-dim equals --fg, so the line carries the state alone. */
+.note ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--fg-dim);
+}
+
 .note a {
   cursor: pointer;
 }
