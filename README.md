@@ -3,12 +3,13 @@
 > Hover a desktop icon → see your own notes about it.
 
 Tofu Nuggets is a lightweight desktop overlay for Windows. Hover over any file or
-folder icon on your desktop and a glassy panel appears showing context you wrote
-yourself — a "nugget." Notes are rich text (todos, links, formatting), created with
-a global hotkey, and stored as plain sidecar files next to the item they describe.
+folder icon on your desktop — or inside a File Explorer window — and a glassy panel
+appears showing context you wrote yourself — a "nugget." Notes are rich text (todos,
+links, formatting), created with a global hotkey, and stored as plain sidecar files
+next to the item they describe.
 
 It runs quietly in the background: near-zero CPU when idle, hover polling only while
-the desktop is the foreground window.
+the desktop or a File Explorer window is in the foreground.
 
 ## Status
 

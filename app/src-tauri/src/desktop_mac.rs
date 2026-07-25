@@ -668,6 +668,15 @@ pub fn virtual_screen_width() -> i32 {
         .unwrap_or(i32::MAX)
 }
 
+/// Bottom-most edge across displays, in points (panel bottom-flip bound).
+pub fn virtual_screen_height() -> i32 {
+    displays()
+        .iter()
+        .map(|b| (b.origin.y + b.size.height).round() as i32)
+        .max()
+        .unwrap_or(i32::MAX)
+}
+
 pub fn desktop_dirs() -> Vec<PathBuf> {
     std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Desktop"))

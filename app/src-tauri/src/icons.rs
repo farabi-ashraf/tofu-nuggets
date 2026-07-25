@@ -73,12 +73,14 @@ pub fn resolve_path(display_name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 #[cfg(windows)]
 pub use crate::desktop::{
     accessibility_trusted, cursor_pos, debug_cursor_chain, desktop_dirs, init_thread, new_icons,
-    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_width,
+    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_height,
+    virtual_screen_width,
 };
 #[cfg(target_os = "macos")]
 pub use crate::desktop_mac::{
     accessibility_trusted, cursor_pos, debug_cursor_chain, desktop_dirs, init_thread, new_icons,
-    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_width,
+    open_accessibility_settings, suppress_desktop_infotips, virtual_screen_height,
+    virtual_screen_width,
 };
 
 /// `None` where the platform needs no such grant (Windows); `Some(false)`

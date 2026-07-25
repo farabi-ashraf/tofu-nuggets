@@ -130,6 +130,11 @@ pub fn open_for_target(app: &AppHandle) {
                 icon.name
             ),
         );
+        // An Explorer item that resolved a name but no path usually means the
+        // folder came from the wrong tab — dump what was under the cursor.
+        if let Some(chain) = icons::debug_cursor_chain() {
+            crate::logfile::log(app, &chain);
+        }
         return;
     };
     crate::logfile::log(app, &format!("editor: opening for '{}'", icon.name));

@@ -163,6 +163,7 @@ fn run(app: &AppHandle, provider: &impl DesktopIcons, paused: &Paused) {
         if let Some(panel_r) = show_panel(
             app,
             &icon.rect,
+            pt,
             ShowPayload {
                 name: icon.name.clone(),
                 path: path.display().to_string(),
@@ -187,14 +188,43 @@ fn point_in_hover_zone(pt: (i32, i32), icon: &IconRect, panel: &IconRect) -> boo
     in_icon || in_panel
 }
 
-/// Panel goes to the right of the icon in physical pixels, flipped left when
-/// it would run off the virtual screen's right edge.
-fn panel_rect(icon: &IconRect, pw: i32, ph: i32, screen_w: i32) -> IconRect {
-    let mut left = icon.right + PANEL_GAP;
+/// Widest an anchor item may be before the panel anchors to the cursor instead
+/// of the item's edges. Desktop icon cells are small; Explorer rows in
+/// details/list/content span most of the window, and anchoring to their far
+/// right shoves the panel off-screen — so wide items anchor at the cursor.
+const MAX_ANCHOR_W: i32 = 220;
+
+/// Place the panel beside the item (physical pixels), flipping to the other
+/// side / edge when it would run off the virtual screen, and clamping so it is
+/// always fully on-screen. Origin is assumed (0,0) — the same single-/primary-
+/// monitor assumption the rest of the engine already makes.
+fn panel_rect(
+    icon: &IconRect,
+    cursor: (i32, i32),
+    pw: i32,
+    ph: i32,
+    screen_w: i32,
+    screen_h: i32,
+) -> IconRect {
+    // Anchor horizontally to the item for narrow icons, to the cursor for wide
+    // rows (so column width can't push the panel to the far edge).
+    let (aleft, aright) = if icon.right - icon.left > MAX_ANCHOR_W {
+        (cursor.0, cursor.0)
+    } else {
+        (icon.left, icon.right)
+    };
+    let mut left = aright + PANEL_GAP;
     if left + pw > screen_w {
-        left = icon.left - PANEL_GAP - pw;
+        left = aleft - PANEL_GAP - pw; // flip to the left side
     }
-    let top = icon.top.max(0);
+    left = left.clamp(0, (screen_w - pw).max(0));
+
+    let mut top = icon.top;
+    if top + ph > screen_h {
+        top = icon.bottom - ph; // flip above the item from the bottom edge
+    }
+    top = top.clamp(0, (screen_h - ph).max(0));
+
     IconRect {
         left,
         top,
@@ -204,7 +234,12 @@ fn panel_rect(icon: &IconRect, pw: i32, ph: i32, screen_w: i32) -> IconRect {
 }
 
 /// Returns the panel's rect (engine units) when shown.
-fn show_panel(app: &AppHandle, icon_rect: &IconRect, payload: ShowPayload) -> Option<IconRect> {
+fn show_panel(
+    app: &AppHandle,
+    icon_rect: &IconRect,
+    cursor: (i32, i32),
+    payload: ShowPayload,
+) -> Option<IconRect> {
     let win = overlay::get_or_create(app).ok()?;
     // Engine units are physical pixels on Windows, so the panel is sized in
     // them; macOS works in points, which already absorb the display scale.
@@ -221,7 +256,14 @@ fn show_panel(app: &AppHandle, icon_rect: &IconRect, payload: ShowPayload) -> Op
         .unwrap_or(1.0);
     let pw = (PANEL_W * sf * zoom).round() as i32;
     let ph = (PANEL_H * sf * zoom).round() as i32;
-    let r = panel_rect(icon_rect, pw, ph, icons::virtual_screen_width());
+    let r = panel_rect(
+        icon_rect,
+        cursor,
+        pw,
+        ph,
+        icons::virtual_screen_width(),
+        icons::virtual_screen_height(),
+    );
     // Stash for freshly created pages, then emit for already-loaded ones.
     if let Ok(mut cur) = app.state::<CurrentNugget>().0.lock() {
         *cur = Some(payload.clone());
@@ -295,9 +337,15 @@ mod tests {
         }
     }
 
+    // Cursor inside the icon; irrelevant for narrow icons (item-anchored).
+    fn cur(ic: &IconRect) -> (i32, i32) {
+        ((ic.left + ic.right) / 2, (ic.top + ic.bottom) / 2)
+    }
+
     #[test]
     fn panel_sits_right_of_icon_normally() {
-        let r = panel_rect(&icon(100, 200), 340, 240, 1920);
+        let ic = icon(100, 200);
+        let r = panel_rect(&ic, cur(&ic), 340, 240, 1920, 1080);
         assert_eq!(r.left, 176 + PANEL_GAP);
         assert_eq!(r.top, 200);
         assert_eq!(r.right - r.left, 340);
@@ -309,7 +357,7 @@ mod tests {
         // Icon hugging the right edge of a 1920-wide screen: right side would
         // overflow, so the panel goes to the icon's left.
         let ic = icon(1920 - 80, 300);
-        let r = panel_rect(&ic, 340, 240, 1920);
+        let r = panel_rect(&ic, cur(&ic), 340, 240, 1920, 1080);
         assert_eq!(r.right, ic.left - PANEL_GAP);
         assert!(r.right <= 1920);
         assert_eq!(r.left, ic.left - PANEL_GAP - 340);
@@ -317,13 +365,14 @@ mod tests {
 
     #[test]
     fn flip_threshold_is_exact() {
+        // Icon.left = 400 leaves room for a left-flip to land fully on-screen.
+        let ic = icon(400, 0); // icon.right = 476
+        let screen_w = 476 + PANEL_GAP + 340;
         // Exactly fits: no flip.
-        let ic = icon(0, 0); // icon.right = 76
-        let screen_w = 76 + PANEL_GAP + 340;
-        let r = panel_rect(&ic, 340, 240, screen_w);
-        assert_eq!(r.left, 76 + PANEL_GAP);
-        // One pixel narrower: flips.
-        let r2 = panel_rect(&ic, 340, 240, screen_w - 1);
+        let r = panel_rect(&ic, cur(&ic), 340, 240, screen_w, 1080);
+        assert_eq!(r.left, 476 + PANEL_GAP);
+        // One pixel narrower: flips to the icon's left (still on-screen here).
+        let r2 = panel_rect(&ic, cur(&ic), 340, 240, screen_w - 1, 1080);
         assert_eq!(r2.right, ic.left - PANEL_GAP);
     }
 
@@ -335,7 +384,7 @@ mod tests {
             right: 176,
             bottom: 66,
         };
-        let r = panel_rect(&ic, 340, 240, 1920);
+        let r = panel_rect(&ic, cur(&ic), 340, 240, 1920, 1080);
         assert_eq!(r.top, 0);
     }
 
@@ -344,7 +393,30 @@ mod tests {
         // 1.5x panel zoom on a 125% DPI screen.
         let pw = (340.0_f64 * 1.25 * 1.5).round() as i32;
         let ic = icon(2560 - 400, 100);
-        let r = panel_rect(&ic, pw, 450, 2560);
+        let r = panel_rect(&ic, cur(&ic), pw, 450, 2560, 1440);
         assert_eq!(r.right, ic.left - PANEL_GAP);
+    }
+
+    #[test]
+    fn wide_row_anchors_to_cursor_not_far_right() {
+        // Explorer details/list/content row spanning most of the window: the
+        // panel must sit beside the CURSOR, not the row's far-right edge.
+        let ic = IconRect {
+            left: 250,
+            top: 300,
+            right: 1250, // 1000 px wide -> wide-item path
+            bottom: 322,
+        };
+        let r = panel_rect(&ic, (500, 311), 340, 240, 1920, 1080);
+        assert_eq!(r.left, 500 + PANEL_GAP);
+    }
+
+    #[test]
+    fn panel_flips_up_at_bottom_edge() {
+        // Item near the bottom: the panel flips up and stays fully on-screen.
+        let ic = icon(100, 1000); // bottom = 1096, off a 1080 screen
+        let r = panel_rect(&ic, cur(&ic), 340, 240, 1920, 1080);
+        assert!(r.bottom <= 1080);
+        assert_eq!(r.top, 1080 - 240);
     }
 }
