@@ -25,6 +25,81 @@
   volumes not annotatable (deliberate no-fix), macOS exit regression
   not reproduced since PR #26 (census logging stays in place).
 
+## Next step — CONFIRMED v0.4.0 plan (owner, 2026-07-25 planning session)
+
+Fixes the 0.3.0 badge-layer bugs (Windows autohide taskbar blocked; macOS stray
+window after display sleep + dots traveling on Show Desktop) plus the small-updates
+backlog. **Windows work lands and is verified first; macOS code only after** (owner
+token-economy instruction). Coding sessions run on Opus 4.8-Low → keep PRs small,
+each with an explicit verification checklist.
+
+**Decisions (owner-confirmed):**
+
+1. **Windows badges — Option A, keep the layer**: TOPMOST layered window stays.
+   Bug cause: monitor-covering TOPMOST window trips the shell's "fullscreen app"
+   heuristic → autohide-taskbar reveal suppressed. Fix ladder: (1) shrink layer
+   1 px from each monitor edge; (2) if insufficient, carve autohide reveal strips
+   from the window bounds (`SHAppBarMessage` ABM_GETSTATE/ABM_GETTASKBARPOS, all
+   edges/monitors). HWND_BOTTOM rework (drop TOPMOST, delete occlusion machinery)
+   was considered and NOT chosen. `IShellIconOverlayIdentifier` re-rejected
+   (15 slots; one overlay per file — clashes with OneDrive on owner's redirected
+   desktop; HKLM COM DLL inside explorer.exe; no accessibility control).
+   Verify: autohide taskbar reveals with badges on; dots render + occlude; Win+D ok.
+   **DONE — PR #31 merged, owner-verified 2026-07-25. Ladder step 1 was enough**:
+   new `layer_rect()` in `badges.rs` = virtual screen inset `EDGE_INSET` (1 px)
+   all sides; all dot coords are relative to that rect's origin (badged set,
+   occlusion pass, `UpdateLayeredWindow` push all read the one helper). TOPMOST,
+   occlusion machinery and parentage untouched. Step 2 (`SHAppBarMessage` reveal
+   strips) NOT needed and NOT implemented. **Known limit left standing**: only the
+   outer virtual-screen edges are inset, so a monitor in the *interior* of a
+   multi-monitor arrangement is still fully covered — if the taskbar bug ever
+   shows up there, step 2 is the follow-up.
+2. **macOS badges — Finder tags replace the webview layer**: write/remove tag
+   `"Nugget"` (orange) via xattr `com.apple.metadata:_kMDItemUserTags` (binary
+   plist array; append/remove ONLY our tag, never touch user tags). Finder draws
+   the dot natively on Desktop AND in Finder windows (next big update gets badges
+   free). Sidecars stay source of truth; tags are a derived cue, resynced at
+   startup. Deletes `badges_mac.rs` + `badges.html` machinery. FinderSync appex
+   deferred (Xcode target, bundler can't embed, user must enable, ad-hoc-signing
+   unknowns) — revisit only if tags insufficient or when Apple $99 account bought.
+   Tradeoffs accepted: tag visible in Get Info/sidebar; dot per Finder convention
+   (not our styled corner dot); badge size/corner settings become Windows-only.
+3. **macOS lifecycle — real fix, delete the hacks**: override
+   `applicationShouldTerminateAfterLastWindowClosed` → false on the NSApp delegate
+   via objc2 (the documented fallback; `prevent_exit`/hide-on-close/Accessory are
+   all already in place and proven insufficient — termination skips
+   `ExitRequested`). Then panel goes back to plain `hide()` (parking removed) —
+   the stray after-sleep window IS the parked panel constrained back on-screen.
+   Census logging stays as discriminator. **ORDER HAZARD: the always-visible badge
+   webview window is plausibly what keeps the app alive today — the delegate
+   override must land and be Mini-verified BEFORE the badge window is deleted.**
+4. **Small updates (ship with v0.4.0, all Windows-testable)**: checklist done
+   items get strikethrough (CSS on `data-checked="true"` in editor/overlay/main
+   preview); app version shown on main window; main-window "report bugs / request
+   features" text → `farabigithub@gmail.com` (owner-confirmed address), click
+   shows active-development/breakage-expected reminder. Update dialog ALREADY
+   shows release-note body (`updater.rs`) — the gap is process: **standing release
+   rule: every release body lists new features with a one-line description each.**
+5. **macOS pause/badges-off semantics with tags (owner-confirmed)**: tray Pause
+   leaves tags in place (pauses hover only on macOS — dots can't be cheaply
+   hidden when Finder draws them; documented platform difference); persistent
+   badges-off setting strips our tag from all files, re-tags on re-enable.
+   Note-delete always removes the file's tag.
+
+**Phases**: ~~W1 taskbar-fix PR~~ (DONE, PR #31) → **W2 small-updates PR (next)**
+(verified on this machine) → M3 delegate-override + unpark PR → M4 Finder-tags
+PR (batch Mini test runs — every CI build re-prompts the Accessibility grant under ad-hoc signing) →
+tag `v0.4.0` (both platforms, feature-list release body).
+
+**After v0.4.0 — next big update: Explorer/Finder integration.** macOS badge half
+already done via tags; remaining = AX hover inside Finder windows (false-trigger
+bug already on file). Windows = Route 3 as scoped (heavy: UIA over Explorer
+windows incl. Win11 tabs, per-window infotip suppression, perf budget). Explorer
+badge approach deliberately undecided; shell overlay stays rejected. **Parked
+further updates**: last-edit date display (cheap — `modified_ms` already stored),
+edit history (schema change, design later), telemetry (privacy + endpoint
+decision needed).
+
 ## Older status (2026-07-20)
 
 - **Release 0.1.3** — shipped through the CI pipeline, updater live-verified.
