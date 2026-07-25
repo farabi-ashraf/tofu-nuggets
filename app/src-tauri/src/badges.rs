@@ -13,6 +13,12 @@
 //! ~100 ms; a 2 s timer handles icon-position/sidecar drift while the desktop
 //! is foreground. Zero work while nothing changes.
 //!
+//! The layer is inset `EDGE_INSET` px from every virtual-screen edge: a
+//! TOPMOST window that exactly covers a monitor trips the shell's
+//! "fullscreen app" heuristic, which suppresses autohide-taskbar reveal.
+//! All dot coordinates are relative to that inset rect's origin, not to the
+//! raw virtual screen.
+//!
 //! Windows-only module (cfg-gated in main.rs; the macOS layer is
 //! `badges_mac.rs` — a click-through webview window, since none of the GDI /
 //! WinEvent machinery here ports).
@@ -36,7 +42,10 @@ const REFRESH_MS: u32 = 2000;
 const EVENT_TIMER_ID: usize = 2;
 const EVENT_DELAY_MS: u32 = 80;
 const BADGE_R: i32 = 6; // radius in px
-                        // Warm accent, premultiplied at full alpha below.
+/// Gap kept between the layer window and every virtual-screen edge, so the
+/// window never exactly covers a monitor (see the module header).
+const EDGE_INSET: i32 = 1;
+// Warm accent, premultiplied at full alpha below.
 const BADGE_RGBA: (u8, u8, u8, u8) = (0xF5, 0x8F, 0x3C, 0xE6);
 
 /// Badge window handle for the WinEvent callbacks (single instance).
@@ -66,7 +75,7 @@ struct Ctx {
     visible: bool,
     paused: Paused,
     settings: settings::Shared,
-    /// Dot centers (bitmap-relative to the virtual-screen origin) of every
+    /// Dot centers (bitmap-relative to the `layer_rect()` origin) of every
     /// badged icon, refreshed by the UIA walk.
     badged: Vec<(i32, i32)>,
     /// The subset actually drawn last push (post-occlusion); repaints are
@@ -269,8 +278,8 @@ fn full_refresh(hwnd: HWND, ctx: &mut Ctx) {
     let Ok(icons) = ctx.uia.list_icons() else {
         return;
     };
-    let vx = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let vy = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let layer = layer_rect();
+    let (vx, vy) = (layer.left, layer.top);
     ctx.badged = icons
         .iter()
         .filter(|ic| {
@@ -299,6 +308,18 @@ fn virtual_screen() -> RECT {
             right: GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
             bottom: GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN),
         }
+    }
+}
+
+/// Virtual screen inset by `EDGE_INSET` on every side — the layer window's
+/// bounds, and the origin every dot coordinate is relative to.
+fn layer_rect() -> RECT {
+    let vs = virtual_screen();
+    RECT {
+        left: vs.left + EDGE_INSET,
+        top: vs.top + EDGE_INSET,
+        right: vs.right - EDGE_INSET,
+        bottom: vs.bottom - EDGE_INSET,
     }
 }
 
@@ -376,8 +397,8 @@ fn occlusion_pass(hwnd: HWND, ctx: &mut Ctx, occluders: &[RECT]) {
         hide(hwnd, ctx);
         return;
     }
-    let vx = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let vy = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let layer = layer_rect();
+    let (vx, vy) = (layer.left, layer.top);
 
     let visible_dots: Vec<(i32, i32)> = ctx
         .badged
@@ -402,10 +423,10 @@ fn occlusion_pass(hwnd: HWND, ctx: &mut Ctx, occluders: &[RECT]) {
 
 fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>) {
     unsafe {
-        let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let layer = layer_rect();
+        let (vx, vy) = (layer.left, layer.top);
+        let vw = layer.right - layer.left;
+        let vh = layer.bottom - layer.top;
         if vw <= 0 || vh <= 0 {
             return;
         }
