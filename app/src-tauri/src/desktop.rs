@@ -13,10 +13,19 @@
 //! or neither — in the last case no UIA call runs at all, keeping the engine
 //! idle (perf budget, docs/ARCHITECTURE.md). For an Explorer window the hovered
 //! item resolves to an absolute path from the item's UIA name plus the window's
-//! current folder, read via the E0-proven chain IShellWindows → IShellBrowser
-//! (SID_STopLevelBrowser) → IFolderView2. Win11 tabs share one top-level HWND;
-//! the active tab is the one whose shell-view window `IsWindowVisible` (E0), and
-//! no tab-switch event exists so the folder is read fresh on each hit-test.
+//! current folder, read via the chain IShellWindows → IShellBrowser
+//! (SID_STopLevelBrowser) → IFolderView2.
+//!
+//! Two things the E0 spike could not verify, pinned on real hardware (E1):
+//! - **Apartment**: this chain is STA-only. From an MTA thread
+//!   `IShellBrowser::GetWindow` fails (0x8001010D) and nothing resolves, so the
+//!   worker threads init COM as STA (`init_com_for_thread`).
+//! - **ElementFromPoint** lands on a child of the row (a column cell / label),
+//!   not the item, so `item_ancestor` climbs to the ListItem/DataItem.
+//! Win11 tabs each surface as their own IShellBrowser sharing one top HWND; the
+//! active tab is the one whose view window contains the cursor
+//! (`WindowFromPoint`) — visibility does not distinguish them reliably. No
+//! tab-switch event exists, so the folder is read fresh on each hit-test.
 //!
 //! Infotips: the desktop trick (`suppress_desktop_infotips`, clearing
 //! `LVS_EX_INFOTIP`) targets a Win32 SysListView32. Modern Explorer content
@@ -74,6 +83,23 @@ fn foreground_surface() -> Surface {
     }
 }
 
+/// Whether `child` is `ancestor` or nested under it (walking parent windows).
+fn is_descendant(mut child: HWND, ancestor: HWND) -> bool {
+    if child.is_invalid() {
+        return false;
+    }
+    for _ in 0..32 {
+        if child.0 == ancestor.0 {
+            return true;
+        }
+        match unsafe { GetParent(child) } {
+            Ok(p) if !p.is_invalid() => child = p,
+            _ => return false,
+        }
+    }
+    false
+}
+
 fn to_icon_rect(r: RECT) -> IconRect {
     IconRect {
         left: r.left,
@@ -118,13 +144,19 @@ impl DesktopUia {
     }
 
     /// Active tab's shell browser + current folder for a top-level CabinetWClass
-    /// window. Win11 tabs share one top HWND; the active tab is the one whose
-    /// shell-view window is visible (E0), with any matching tab as fallback.
-    fn active_browser(&self, top: HWND) -> Option<(IShellBrowser, PathBuf)> {
+    /// window. Win11 tabs share one top HWND and each tab is its own
+    /// IShellBrowser; the active tab is the one whose shell-view window contains
+    /// the cursor point (the covered tabs' views never do). Falls back to a
+    /// visible matching tab, then any matching tab, so a cursor that is not over
+    /// the view (e.g. selection fallback with the pointer on the toolbar) still
+    /// resolves.
+    fn active_browser(&self, top: HWND, x: i32, y: i32) -> Option<(IShellBrowser, PathBuf)> {
         let shell = self.shell_windows()?;
+        let at_cursor = unsafe { WindowFromPoint(POINT { x, y }) };
         unsafe {
             let count = shell.Count().ok()?;
-            let mut fallback = None;
+            let mut visible_match = None;
+            let mut any_match = None;
             for i in 0..count {
                 let Ok(disp) = shell.Item(&VARIANT::from(i)) else {
                     continue;
@@ -144,32 +176,52 @@ impl DesktopUia {
                 let Some(folder) = folder_path_of(&browser) else {
                     continue;
                 };
-                if IsWindowVisible(view_hwnd).as_bool() {
-                    return Some((browser, folder));
+                if is_descendant(at_cursor, view_hwnd) {
+                    return Some((browser, folder)); // cursor is in this tab's view = active tab
                 }
-                fallback = Some((browser, folder));
+                if visible_match.is_none() && IsWindowVisible(view_hwnd).as_bool() {
+                    visible_match = Some((browser.clone(), folder.clone()));
+                }
+                if any_match.is_none() {
+                    any_match = Some((browser, folder));
+                }
             }
-            fallback
+            visible_match.or(any_match)
         }
+    }
+
+    /// Nearest ListItem/DataItem at or above `el`. ElementFromPoint returns the
+    /// deepest element under the cursor, which in Explorer's modern view is a
+    /// child of the row (the label Text or the icon Image), so we climb the
+    /// control tree to the item itself. Bounded so a miss can't walk to the root.
+    fn item_ancestor(&self, el: IUIAutomationElement) -> Option<IUIAutomationElement> {
+        let walker = unsafe { self.auto.ControlViewWalker() }.ok()?;
+        let mut cur = el;
+        for _ in 0..6 {
+            let ct = unsafe { cur.CurrentControlType() }.ok()?;
+            if ct == UIA_ListItemControlTypeId || ct == UIA_DataItemControlTypeId {
+                return Some(cur);
+            }
+            cur = unsafe { walker.GetParentElement(&cur) }.ok()?;
+        }
+        None
     }
 
     /// Item under the cursor inside an Explorer content window, resolved to an
     /// absolute path (item's UIA name against the active tab's folder).
     fn explorer_icon_at(&self, x: i32, y: i32, top: HWND) -> Option<Icon> {
         unsafe {
-            let el = self.auto.ElementFromPoint(POINT { x, y }).ok()?;
+            let hit = self.auto.ElementFromPoint(POINT { x, y }).ok()?;
             // Content items are ListItem (icon/list views) or DataItem (details);
-            // the nav-pane tree (TreeItem) and breadcrumb (buttons) are excluded.
-            let ct = el.CurrentControlType().ok()?;
-            if ct != UIA_ListItemControlTypeId && ct != UIA_DataItemControlTypeId {
-                return None;
-            }
-            let name = el.CurrentName().ok()?.to_string();
+            // ElementFromPoint may land on a child, so climb to the item. The
+            // nav-pane tree (TreeItem) and breadcrumb (buttons) never reach one.
+            let item = self.item_ancestor(hit)?;
+            let name = item.CurrentName().ok()?.to_string();
             if name.is_empty() {
                 return None;
             }
-            let rect = to_icon_rect(el.CurrentBoundingRectangle().ok()?);
-            let (_, folder) = self.active_browser(top)?;
+            let rect = to_icon_rect(item.CurrentBoundingRectangle().ok()?);
+            let (_, folder) = self.active_browser(top, x, y)?;
             let path = resolve_path(&name, std::slice::from_ref(&folder));
             Some(Icon { name, rect, path })
         }
@@ -178,7 +230,8 @@ impl DesktopUia {
     /// Selected item in an Explorer content window (hotkey fallback). Uses the
     /// shell folder view's selection, which yields the filesystem path directly.
     fn explorer_selected(&self, top: HWND) -> Option<Icon> {
-        let (browser, _) = self.active_browser(top)?;
+        let (x, y) = cursor_pos().unwrap_or((0, 0));
+        let (browser, _) = self.active_browser(top, x, y)?;
         unsafe {
             let view = browser.QueryActiveShellView().ok()?;
             let fv: IFolderView2 = view.cast().ok()?;
@@ -335,6 +388,10 @@ pub fn virtual_screen_width() -> i32 {
     unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }
 }
 
+pub fn virtual_screen_height() -> i32 {
+    unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }
+}
+
 pub fn init_thread() {
     init_com_for_thread();
 }
@@ -422,14 +479,108 @@ pub fn accessibility_trusted() -> Option<bool> {
 
 pub fn open_accessibility_settings() {}
 
-/// Only macOS needs the "what was actually under the cursor" dump; UIA
-/// detection is stable enough not to have needed one.
+/// Dump what UIA sees under the cursor + the foreground surface + (for Explorer)
+/// the resolved active folder. Logged by the editor when the hotkey found no
+/// target, so an Explorer miss is diagnosable from tofu.log instead of guessed.
 pub fn debug_cursor_chain() -> Option<String> {
-    None
+    let (x, y) = cursor_pos()?;
+    let fg = unsafe { GetForegroundWindow() };
+    let fclass = class_of(fg);
+    let mut out = format!("cursor chain @({x},{y}) fg_class={fclass:?}\n");
+    unsafe {
+        let Ok(auto) =
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+        else {
+            out.push_str("  (IUIAutomation create failed)\n");
+            return Some(out);
+        };
+        if let Ok(el) = auto.ElementFromPoint(POINT { x, y }) {
+            if let Ok(walker) = auto.ControlViewWalker() {
+                let mut cur = Some(el);
+                let mut depth = 0;
+                while let Some(c) = cur {
+                    if depth > 8 {
+                        break;
+                    }
+                    let ct = c.CurrentControlType().map(|t| t.0).unwrap_or(-1);
+                    let name = c.CurrentName().map(|s| s.to_string()).unwrap_or_default();
+                    let cls = c
+                        .CurrentClassName()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "  [{depth}] ct={ct} class={cls:?} name={name:?}\n"
+                    ));
+                    cur = walker.GetParentElement(&c).ok();
+                    depth += 1;
+                }
+            }
+        } else {
+            out.push_str("  (ElementFromPoint failed)\n");
+        }
+    }
+    if fclass == "CabinetWClass" {
+        out.push_str(&dump_shell_tabs(fg, x, y));
+    }
+    Some(out)
 }
 
+/// Diagnostic: every IShellWindows entry that belongs to the foreground
+/// Explorer window, with its folder, view HWND, visibility, and whether the
+/// cursor is inside that tab's view. Shows whether Win11 tabs surface as
+/// separate entries and which one active_browser should pick.
+fn dump_shell_tabs(top: HWND, x: i32, y: i32) -> String {
+    let mut out = String::new();
+    let at_cursor = unsafe { WindowFromPoint(POINT { x, y }) };
+    out.push_str(&format!(
+        "  WindowFromPoint({x},{y}) = {:?} class={:?}\n",
+        at_cursor.0,
+        class_of(at_cursor)
+    ));
+    let shell: IShellWindows = match unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_ALL) } {
+        Ok(s) => s,
+        Err(e) => return format!("  ShellWindows create failed: {e}\n"),
+    };
+    unsafe {
+        let count = shell.Count().unwrap_or(0);
+        out.push_str(&format!("  ShellWindows.Count = {count}\n"));
+        for i in 0..count {
+            let Ok(disp) = shell.Item(&VARIANT::from(i)) else {
+                continue;
+            };
+            let Ok(sp) = disp.cast::<IServiceProvider>() else {
+                continue;
+            };
+            let Ok(browser) = sp.QueryService::<IShellBrowser>(&SID_STOP_LEVEL_BROWSER) else {
+                continue;
+            };
+            let view = browser.GetWindow().ok();
+            let vtop = view.map(|v| GetAncestor(v, GA_ROOT).0 as isize);
+            let matches = vtop == Some(top.0 as isize);
+            let visible = view.map(|v| IsWindowVisible(v).as_bool());
+            let cursor_in = view.map(|v| is_descendant(at_cursor, v)).unwrap_or(false);
+            let folder = folder_path_of(&browser)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<none>".into());
+            out.push_str(&format!(
+                "  [{i}] match_fg={matches} view={:?} visible={visible:?} cursor_in_view={cursor_in} folder={folder}\n",
+                view.map(|v| v.0)
+            ));
+        }
+    }
+    out
+}
+
+/// COM apartment for the UIA/shell worker threads (hover, hotkey, badge layer).
+///
+/// Single-threaded (STA), not multithreaded. The Explorer chain is
+/// apartment-affine: from an MTA thread `IShellBrowser::GetWindow` fails with
+/// `RPC_E_CANTCALLOUT_ININPUTSYNCCALL` (0x8001010D), so the active tab's window
+/// and folder never resolve and Explorer hover/hotkey find nothing (E1 spike
+/// probe_e1: same call returns Ok under STA). UIA clients run fine in an STA,
+/// and the badge layer already pumps a message loop, so STA suits all three.
 pub fn init_com_for_thread() {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 }

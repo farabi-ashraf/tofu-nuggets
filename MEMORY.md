@@ -169,16 +169,28 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
 - **E1**: hover + hotkey inside Explorer windows — extend the UIA hit-test
   path, per-window infotip suppression, polling gate becomes "desktop OR
   Explorer window foreground" (README + ARCHITECTURE budget line update in
-  the same PR). **DONE (code) — `wip-explorer-hover`, PR pending, owner runs
-  the behavioral checklist.** All in `desktop.rs` (hover.rs/editor.rs/hotkey.rs
-  untouched — they call `icon_at`/`selected_icon`, now surface-aware):
-  `foreground_surface()` classifies the foreground window (Progman/WorkerW =
-  desktop, CabinetWClass = Explorer, else None → no UIA hit-test, verified 0 ms
-  CPU over 3 s idle). Explorer item → path = UIA name resolved against the active
-  tab's folder (`active_browser` = IShellWindows entry with top HWND == fg and
-  visible view; folder via `folder_path_of`). Hotkey selection fallback uses the
-  shell folder view's selection (`IFolderView2::Items(SVGIO_SELECTION)` →
-  filesystem path). **Infotip suppression NOT implemented for Explorer**: modern
+  the same PR). **DONE — `wip-explorer-hover`, PR #36, OWNER-VERIFIED on this
+  machine 2026-07-26** (hover panel, editor, hotkey, selection fallback,
+  multi-tab incl. different-path tabs, details+large+list+content views, desktop
+  unregressed). Core in `desktop.rs` (hotkey.rs untouched; hover.rs got panel
+  placement; editor.rs got a diagnostic log): `foreground_surface()` classifies
+  the foreground window (Progman/WorkerW = desktop, CabinetWClass = Explorer,
+  else None → no UIA hit-test). Explorer item → path = UIA name resolved against
+  the active tab's folder. **Three bugs the E0 spike missed, found + fixed on
+  hardware:** (1) **COM apartment** — the shell chain is STA-only; the worker
+  threads ran MTA where `IShellBrowser::GetWindow` fails (0x8001010D) so nothing
+  resolved → `init_com_for_thread` now uses `COINIT_APARTMENTTHREADED` (badges
+  unaffected, they pump a message loop); (2) **ElementFromPoint** lands on a row
+  child (column cell/label), not the item → `item_ancestor` climbs to the
+  ListItem/DataItem; (3) **active tab** detection by `IsWindowVisible` was
+  unreliable (different-path tabs resolved the wrong folder) → now the tab whose
+  view contains the cursor (`WindowFromPoint` + `is_descendant`). Panel placement
+  reworked: wide Explorer rows anchor to the cursor (not the row's far edge),
+  flips on both axes + clamps on-screen (`virtual_screen_height` added). Hotkey
+  selection fallback uses `IFolderView2::Items(SVGIO_SELECTION)` → filesystem
+  path. `debug_cursor_chain`/`dump_shell_tabs` (Windows) log the cursor chain +
+  all Explorer tabs on a hotkey miss. **Infotip suppression NOT implemented for
+  Explorer**: modern
   content view is `DirectUIHWND`, not SysListView32, so `LVS_EX_INFOTIP` has no
   target — panel is always-on-top + side-offset, native tooltip coexists
   (documented, not hacked). Storage already folder-general (new round-trip test).
