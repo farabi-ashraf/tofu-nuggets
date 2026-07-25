@@ -21,9 +21,9 @@ The Windows desktop is a `SysListView32` list-view hosted under `Progman`/`Worke
 - **UI Automation (recommended)**: `IUIAutomation::ElementFromPoint` on the desktop list gives the item name + bounding rect under the cursor. No cross-process memory games. Works on Win 10/11.
 - Fallback: `LVM_GETITEMPOSITION` / `LVM_GETITEMTEXT` with `VirtualAllocEx` cross-process reads — brittle, avoid unless UIA fails.
 
-Poll cursor position with a low-frequency timer (e.g., 100 ms) + `WM_MOUSEMOVE` low-level hook only while desktop is foreground. Debounce ~400 ms hover before showing the panel.
+Poll cursor position with a low-frequency timer (e.g., 100 ms). The UIA hit-test runs only when the foreground window is the desktop shell (`Progman`/`WorkerW`) **or a File Explorer content window (`CabinetWClass`)** — any other foreground skips it, so the engine stays idle. Debounce ~400 ms hover before showing the panel.
 
-Resolve icon display name → full path via the desktop folder's shell items (`IShellFolder` enum of `FOLDERID_Desktop` + public desktop), matching by display name.
+Resolve icon display name → full path via the desktop folder's shell items (`IShellFolder` enum of `FOLDERID_Desktop` + public desktop), matching by display name. **Inside an Explorer window** the name resolves against that window's current folder, read via `IShellWindows` → `IShellBrowser` → `IFolderView2` (E0 spike `spikes/explorer-pill`); Win11 tabs share one HWND and the active tab is the one whose shell-view window is visible.
 
 **Spike result (2026-07-17, `spikes/hover-detect`): GO.** UIA approach validated on Win 11 — 51/51 desktop icons detected via `ElementFromPoint` with correct path resolution; covered icons correctly report the covering window (the production "don't show panel" case). Findings to carry into the real implementation:
 
@@ -57,6 +57,8 @@ Resolve icon display name → full path via the desktop folder's shell items (`I
 ### Desktop infotip suppression (Milestone 4)
 
 Explorer's native icon infotip (folder-contents / file-type tooltip) pops *over* our panel — unusable for folders. `desktop::suppress_desktop_infotips()` clears `LVS_EX_INFOTIP` (0x0400) on the desktop `SysListView32` via `LVM_SETEXTENDEDLISTVIEWSTYLE`. Desktop-only, reverts on Explorer restart, so it's re-applied on each 2 s badge refresh. Now the panel is the sole hover surface.
+
+**Inside Explorer content windows (E1) the same trick does not apply**: those views are `DirectUIHWND`, not a Win32 `SysListView32`, so the ListView message has no target and there is no per-window infotip toggle to clear. The panel is always-on-top and offset to the item's side, so the native infotip (which appears at the cursor) coexists with it rather than hiding it — no Explorer infotip suppression is implemented, deliberately (not hacked around).
 
 ### Todo checkboxes in the panel (Milestone 4)
 
@@ -110,11 +112,12 @@ The pitch is "light layer on top of the desktop" — these are commitments, not 
 
 | State | CPU | RAM |
 |---|---|---|
-| Idle, desktop not foreground | ~0% (hooks/timers off) | ~15–20 MB (core process) |
-| Desktop foreground, watching | <0.1% (10 Hz cursor timer; UIA hit-test only after ~400 ms hover debounce) | core + badge layer (negligible) |
+| Idle, neither desktop nor Explorer foreground | ~0% (10 Hz cursor poll runs but the UIA hit-test is gated off) | ~15–20 MB (core process) |
+| Desktop or File Explorer foreground, watching | <0.1% (10 Hz cursor timer; UIA hit-test only after ~400 ms hover debounce) | core + badge layer (negligible) |
 | Panel/editor visible (WebView2 warm) | UI-bound only | +60–80 MB while warm |
 
-- **Icon count does not affect hover cost**: detection is a single `ElementFromPoint` hit-test at the cursor, not per-icon scanning. 100 icons and 1000 icons cost the same. Badge refresh enumerates tagged-icon rects only — a few ms every few seconds, only while desktop is foreground.
+- **Icon count does not affect hover cost**: detection is a single `ElementFromPoint` hit-test at the cursor, not per-icon scanning. 100 icons and 1000 icons cost the same — the Explorer path adds only a per-hit folder-path read (no per-item scan). Badge refresh enumerates tagged-icon rects only — a few ms every few seconds, only while desktop is foreground.
+- **Foreground gate**: the UIA hit-test runs only when the foreground window is the desktop shell or a `CabinetWClass` Explorer window; otherwise the engine does no UIA work (measured 0 ms CPU over 3 s with neither foreground, E1).
 - **WebView2 lifecycle**: spawned on first panel/editor show, released after idle timeout (default 5 min, configurable) so RAM returns to core baseline. Cost: first hover after release pays ~300–500 ms cold start; warm hovers render <150 ms.
 - **Measured (Milestone 1, debug build)**: main process 51 MB (release build will shrink), WebView2 warm = **379 MB across 6 processes** — far above the original 60–80 MB estimate. The idle-release mechanism is mandatory to meet budget; implement by destroying/recreating the overlay webview window rather than hiding it.
 - Disk: installer ~10 MB; nuggets 1–5 KB each; SQLite index <1 MB for hundreds of nuggets.

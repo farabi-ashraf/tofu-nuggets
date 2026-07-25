@@ -16,13 +16,14 @@
 | **Index** | SQLite cache (app-data dir) powering the main-window list. Always rebuildable from sidecars; never the only copy of anything. |
 | **Overlay / panel** | The glassy hover panel window showing a nugget. Transparent, undecorated, never-focusable. |
 | **Badge layer** | Full-desktop click-through window drawing dots on annotated icons. Windows: GDI layered window, no webview (`badges.rs`). macOS: transparent webview window fed by `badges:update` (`badges_mac.rs`). |
-| **Hover engine** | Polling loop (cursor + UIA hit-test) deciding when to show/hide the panel. |
+| **Hover engine** | Polling loop (cursor + UIA hit-test) deciding when to show/hide the panel. Scope is the desktop **and** File Explorer content windows (E1); the hit-test is gated to run only while one of those is foreground. |
 | **Main window** | "All nuggets" list (filter, Open/Edit/Delete rows). |
 | **Editor** | TipTap rich-text window opened by hotkey or Edit. |
 | **`nugget://` link** | Editor link scheme for file/folder targets, resolved by `links.rs` via ShellExecute. |
 | **Idle release** | Destroying the overlay window after inactivity so WebView2's process tree exits (RAM back to core baseline); recreated on next hover. |
 | **Virtual icon** | Desktop item with no filesystem path (This PC, Recycle Bin) — not annotatable. |
-| **`DesktopIcons` trait** | Portable icon-provider abstraction in `icons.rs` (B2). Windows impl = `desktop.rs` (UIA); macOS = `desktop_mac.rs` (stub until AX-API impl lands). Hover engine, editor, and main wiring only touch `crate::icons`. |
+| **`DesktopIcons` trait** | Portable icon-provider abstraction in `icons.rs` (B2). Windows impl = `desktop.rs` (UIA; resolves desktop icons **and** File Explorer items, E1); macOS = `desktop_mac.rs` (stub until AX-API impl lands). Hover engine, editor, and main wiring only touch `crate::icons`. |
+| **Foreground surface** | Which surface the Windows hit-test targets, from the foreground window class: desktop shell (`Progman`/`WorkerW`), an Explorer content window (`CabinetWClass`), or neither (no hit-test — engine idle). Save/Open dialogs (`#32770`) fall through to neither. |
 
 ## Code map — `app/src-tauri/src/`
 
@@ -31,7 +32,7 @@
 | `main.rs` | App wiring: plugins, managed state, command registry, startup (WebView2 guard, index rebuild, watcher, hotkey, hover, badges, tray) | `main`, `webview_missing_alert` |
 | `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
 | `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …); accessibility-permission commands (`None` = platform needs no grant) | `DesktopIcons`, `new_icons`, `resolve_path`, `accessibility_status`, `open_accessibility_pane` |
-| `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection, display-name→path resolution, desktop roots, infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
+| `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection over the desktop **and** File Explorer windows (`foreground_surface` gate; Explorer folder via `IShellWindows`→`IShellBrowser`→`IFolderView2`, active tab = visible view), display-name→path resolution, desktop roots, desktop infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
 | `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX hit-test hover + `list_icons`/`selected_icon` by walking down from Finder's app element (pid from the CG window list); CG window-list helpers for the badge layer (`onscreen_window_rects`, `display_bounds_pts`); hand-declared FFI, points throughout, Accessibility prompt/status, `debug_cursor_chain` + `debug_finder_tree` dumps for the log | `MacIcons`, `debug_cursor_chain` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
 | `badges.rs` | **Windows** badge layer: GDI dot painting, per-dot occlusion, WinEvent-driven refresh | `spawn` |
@@ -110,5 +111,6 @@
 - Watcher rename/move updates the index but doesn't emit `nuggets:changed` → open main window shows stale name until reopened.
 - Rename while app not running orphans the sidecar (old filename no longer matches; note preserved on disk, unlisted). Renaming back relinks.
 - Item moved off the desktop then back: hover+badge relink immediately (sidecar re-read), main list only after next index rebuild (restart).
+- **Notes created on File Explorer items (E1) do not appear in the main-window list yet**: the sidecar is written correctly next to the item and hover shows it, but the watcher and index scan still cover the desktop roots only. Main-window list scope for notes outside the desktop is a deferred decision (MEMORY, "decide at E2") — not expanded in E1 on purpose.
 - **Mounted volumes on the macOS desktop are not annotatable**: an external disk shows on the desktop but lives at `/Volumes/<name>`, while name→path resolution only searches the desktop roots, so it is reported as a virtual icon ("has no filesystem path"). Adding `/Volumes` as a root would also pull every mounted disk into the index scan — deliberate decision needed before changing it.
 - **No `window.prompt`/`alert`/`confirm` in UI code**: WKWebView does not implement them (they silently do nothing on macOS), which is why link entry is an in-page bar in the editor. Keep new UI in-page.

@@ -169,7 +169,24 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
 - **E1**: hover + hotkey inside Explorer windows — extend the UIA hit-test
   path, per-window infotip suppression, polling gate becomes "desktop OR
   Explorer window foreground" (README + ARCHITECTURE budget line update in
-  the same PR).
+  the same PR). **DONE (code) — `wip-explorer-hover`, PR pending, owner runs
+  the behavioral checklist.** All in `desktop.rs` (hover.rs/editor.rs/hotkey.rs
+  untouched — they call `icon_at`/`selected_icon`, now surface-aware):
+  `foreground_surface()` classifies the foreground window (Progman/WorkerW =
+  desktop, CabinetWClass = Explorer, else None → no UIA hit-test, verified 0 ms
+  CPU over 3 s idle). Explorer item → path = UIA name resolved against the active
+  tab's folder (`active_browser` = IShellWindows entry with top HWND == fg and
+  visible view; folder via `folder_path_of`). Hotkey selection fallback uses the
+  shell folder view's selection (`IFolderView2::Items(SVGIO_SELECTION)` →
+  filesystem path). **Infotip suppression NOT implemented for Explorer**: modern
+  content view is `DirectUIHWND`, not SysListView32, so `LVS_EX_INFOTIP` has no
+  target — panel is always-on-top + side-offset, native tooltip coexists
+  (documented, not hacked). Storage already folder-general (new round-trip test).
+  **Watcher/index NOT expanded** — Explorer-created notes don't show in the main
+  list yet (deferred to E2). Cargo features gained `Win32_System_Ole/_Variant/
+  _UI_Shell_Common`. Accepted minor regression: desktop hover now gated to
+  desktop-foreground (app-focused hover over a visible desktop gap no longer
+  fires) — matches the documented "only while desktop foreground" intent.
 - **E2**: pill in count mode — create/track/destroy per window, acrylic
   styling, accessibility scaling, count refresh on navigation/tab switch.
 - **E3**: pill click → on-demand dots + all dismissal rules.

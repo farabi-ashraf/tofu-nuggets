@@ -308,6 +308,37 @@ mod tests {
         assert_eq!(read_nugget(&folder).unwrap().html, "folder note");
     }
 
+    // E1: a note created on an item in an arbitrary (non-desktop) folder — the
+    // File Explorer case — round-trips with no desktop assumption. The sidecar
+    // lands in that folder's own `.nuggets`, and reads find it by item path.
+    #[test]
+    fn nugget_on_non_desktop_folder_roundtrips() {
+        let _guard = REDIRECT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        // A redirect root that is NOT this item's parent, to prove the note is
+        // stored under the item's own folder rather than redirected.
+        let redirect = tempfile::tempdir().unwrap();
+        set_redirect_root(Some(redirect.path().to_path_buf()));
+
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("report.pdf");
+        std::fs::write(&file, b"x").unwrap();
+
+        write_nugget(&file, &nugget("<p>Explorer note</p>")).unwrap();
+        // Primary sidecar sits beside the item, in its own folder's .nuggets.
+        assert!(folder
+            .path()
+            .join(SIDECAR_DIR)
+            .join("report.pdf.nugget.json")
+            .is_file());
+        // Not redirected (parent was writable).
+        assert!(!redirect.path().join(SIDECAR_DIR).exists());
+        assert_eq!(read_nugget(&file).unwrap().html, "<p>Explorer note</p>");
+
+        delete_nugget(&file).unwrap();
+        assert!(!has_nugget(&file));
+        set_redirect_root(None);
+    }
+
     #[test]
     fn rename_moves_file_sidecar() {
         let tmp = tempfile::tempdir().unwrap();
