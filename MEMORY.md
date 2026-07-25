@@ -13,7 +13,9 @@
   macOS updater run, worked). All Route 1 leftovers closed: icon enumeration
   (PR #23), badge layer (PRs #25/#26, Mini-verified), release matrix
   (PRs #27/#28).
-- **Next-release backlog (owner, 2026-07-22)**:
+- **Next-release backlog (owner, 2026-07-22) — ALL THREE CLOSED by v0.4.0 phase
+  W2 (PR #33): 1 and 3 shipped as code, 2 became the standing release-notes rule
+  (the dialog already showed the body; the gap was what we wrote in it).**
   1. App version shown on the main window.
   2. Update dialog lists new features with a short description of each
      (today it only asks install yes/no).
@@ -80,14 +82,26 @@ each with an explicit verification checklist.
    shows active-development/breakage-expected reminder. Update dialog ALREADY
    shows release-note body (`updater.rs`) — the gap is process: **standing release
    rule: every release body lists new features with a one-line description each.**
+   **DONE — PR #33 merged, owner-verified 2026-07-25.** Strikethrough is CSS only
+   (`li[data-checked="true"] > div` in `editor.css` + `overlay.css`; the dim uses
+   `--fg-dim`, which equals `--fg` under high contrast so the line alone carries
+   the state there). **The main-window row preview needed no change — `main.js`
+   sets it with `textContent`, so it has no checked markup to style.** Version
+   comes from `window.__TAURI__.app.getVersion()`; **no capability entry was
+   needed — `core:default` → `core:app:default` already grants
+   `core:app:allow-version`** (verified against `gen/schemas/acl-manifests.json`).
+   Report-bugs is a footer button toggling in-page text (never alert/prompt).
+   Release rule now written into `docs/V0.1.3.md` "Release process" and the
+   settled-decisions table below.
 5. **macOS pause/badges-off semantics with tags (owner-confirmed)**: tray Pause
    leaves tags in place (pauses hover only on macOS — dots can't be cheaply
    hidden when Finder draws them; documented platform difference); persistent
    badges-off setting strips our tag from all files, re-tags on re-enable.
    Note-delete always removes the file's tag.
 
-**Phases**: ~~W1 taskbar-fix PR~~ (DONE, PR #31) → **W2 small-updates PR (next)**
-(verified on this machine) → M3 delegate-override + unpark PR → M4 Finder-tags
+**Phases**: ~~W1 taskbar-fix PR~~ (DONE, PR #31) → ~~W2 small-updates PR~~ (DONE,
+PR #33) — **both Windows phases verified on this machine; next is M3**, the first
+macOS phase → **M3 delegate-override + unpark PR** → M4 Finder-tags
 PR (batch Mini test runs — every CI build re-prompts the Accessibility grant under ad-hoc signing) →
 tag `v0.4.0` (both platforms, feature-list release body).
 
