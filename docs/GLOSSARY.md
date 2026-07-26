@@ -16,6 +16,8 @@
 | **Index** | SQLite cache (app-data dir) powering the main-window list. Always rebuildable from sidecars; never the only copy of anything. |
 | **Overlay / panel** | The glassy hover panel window showing a nugget. Transparent, undecorated, never-focusable. |
 | **Badge layer** | Full-desktop click-through window drawing dots on annotated icons. Windows: GDI layered window, no webview (`badges.rs`). macOS: transparent webview window fed by `badges:update` (`badges_mac.rs`). |
+| **Pill** | Small glassy count chip drawn per File Explorer window (E2, `pill.rs`): bottom-right of the content area, showing how many items in that window's active-tab folder carry a note. Hidden at zero. Owned by (not TOPMOST over) its Explorer window. Clicking it will draw dots over the annotated items — E3; in E2 the click only logs. |
+| **Known roots** | Folders outside the desktop where a note has been created, persisted as `known_roots.json` and scanned by the startup index rebuild alongside the desktop roots (`roots.rs`). The FS watcher stays desktop-only. |
 | **Hover engine** | Polling loop (cursor + UIA hit-test) deciding when to show/hide the panel. Scope is the desktop **and** File Explorer content windows (E1); the hit-test is gated to run only while one of those is foreground. |
 | **Main window** | "All nuggets" list (filter, Open/Edit/Delete rows). |
 | **Editor** | TipTap rich-text window opened by hotkey or Edit. |
@@ -23,6 +25,7 @@
 | **Idle release** | Destroying the overlay window after inactivity so WebView2's process tree exits (RAM back to core baseline); recreated on next hover. |
 | **Virtual icon** | Desktop item with no filesystem path (This PC, Recycle Bin) — not annotatable. |
 | **`DesktopIcons` trait** | Portable icon-provider abstraction in `icons.rs` (B2). Windows impl = `desktop.rs` (UIA; resolves desktop icons **and** File Explorer items, E1); macOS = `desktop_mac.rs` (stub until AX-API impl lands). Hover engine, editor, and main wiring only touch `crate::icons`. |
+| **Active tab (Explorer)** | Win11 tabs share one top-level HWND, one `IShellBrowser` each, with no switch event. Hover (E1) picks the tab whose view contains the cursor; the pill (E2) has no cursor, so it probes a point in the middle of the content area and walks *down* the child-window tree (`ChildWindowFromPointEx`), which is unaffected by other apps covering the window. `IsWindowVisible` is NOT a reliable discriminator (E1 finding). The pill catches a folder/tab change from the frame's `EVENT_OBJECT_NAMECHANGE` (so it updates even when Explorer is not focused) and otherwise re-reads on its foreground poll. |
 | **Foreground surface** | Which surface the Windows hit-test targets, from the foreground window class: desktop shell (`Progman`/`WorkerW`), an Explorer content window (`CabinetWClass`), or neither (no hit-test — engine idle). Save/Open dialogs (`#32770`) fall through to neither. |
 
 ## Code map — `app/src-tauri/src/`
@@ -32,12 +35,14 @@
 | `main.rs` | App wiring: plugins, managed state, command registry, startup (WebView2 guard, index rebuild, watcher, hotkey, hover, badges, tray) | `main`, `webview_missing_alert` |
 | `hover.rs` | Hover engine + panel show/hide/position (DPI, edge flip); platform-agnostic via `icons` | `spawn`, `get_current_nugget` |
 | `icons.rs` | `DesktopIcons` trait + portable `Icon`/`IconRect` types + shared display-name→path resolution; re-exports the platform impl (`new_icons`, `cursor_pos`, `desktop_dirs`, …); accessibility-permission commands (`None` = platform needs no grant) | `DesktopIcons`, `new_icons`, `resolve_path`, `accessibility_status`, `open_accessibility_pane` |
-| `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection over the desktop **and** File Explorer windows (`foreground_surface` gate; Explorer folder via `IShellWindows`→`IShellBrowser`→`IFolderView2`, active tab = visible view), display-name→path resolution, desktop roots, desktop infotip suppression | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips` |
+| `desktop.rs` | **Windows** `DesktopIcons` impl: UIA icon detection over the desktop **and** File Explorer windows (`foreground_surface` gate; Explorer folder via `IShellWindows`→`IShellBrowser`→`IFolderView2`, active tab by cursor), display-name→path resolution, desktop roots, desktop infotip suppression; cursor-free Explorer window/active-tab enumeration for the pill | `DesktopUia`, `desktop_dirs`, `suppress_desktop_infotips`, `explorer_windows`, `explorer_is_foreground` |
 | `desktop_mac.rs` | **macOS** `DesktopIcons` impl: AX hit-test hover + `list_icons`/`selected_icon` by walking down from Finder's app element (pid from the CG window list); CG window-list helpers for the badge layer (`onscreen_window_rects`, `display_bounds_pts`); hand-declared FFI, points throughout, Accessibility prompt/status, `debug_cursor_chain` + `debug_finder_tree` dumps for the log | `MacIcons`, `debug_cursor_chain` |
 | `overlay.rs` | Overlay window creation (transparency stack) | `create`, `hide_overlay` |
 | `badges.rs` | **Windows** badge layer: GDI dot painting, per-dot occlusion, WinEvent-driven refresh | `spawn` |
+| `pill.rs` | **Windows** Explorer pill (count mode): one owned GDI layered window per Explorer window, hand-composited rounded chip; per-window create/track/destroy, `LOCATIONCHANGE` reposition, foreground-gated polling, accessibility styling | `spawn`, `notes_changed` |
+| `roots.rs` | Known-roots list: records the parent folder of each saved note, loaded by the startup index rebuild | `load`, `record` |
 | `badges_mac.rs` | **macOS** badge layer: click-through always-on-top webview window over all displays; per-dot occlusion from the CG window list; 2 s poll (no WinEvent equivalent); dots pushed via `badges:update` | `spawn` |
-| `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir` |
+| `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge, per-folder note count (the pill's number) | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir`, `count_notes_in_folder` |
 | `index.rs` | SQLite cache: rebuild scan, upsert/remove/rename, list, clear | `NuggetIndex`, `scan_root` |
 | `watcher.rs` | FS watcher keeping sidecars+index in step with renames/deletes on watched roots | `spawn`, `handle_event` |
 | `editor.rs` | Editor window + save/delete commands | `open_for_path`, `save_nugget`, `delete_nugget` |
@@ -73,7 +78,7 @@
 | `.github/workflows/release.yml` | Tag `v*` → build+sign on Windows AND macOS matrix → draft release with `.exe` + arm64 `.dmg` + merged `latest.json` |
 | `.github/workflows/ci.yml` | PR/push to main → fmt+clippy+test on Windows AND macOS runners (B2 matrix; compile/test gate only, no behavior tests). macOS job also uploads an ad-hoc-signed arm64 `.dmg` artifact (14-day retention) for hardware testing |
 | `spikes/` | Historical go/no-go spikes (hover-detect GO; badge-reparent NO-GO) with findings in their READMEs |
-| `%APPDATA%\com.tofunuggets.app\` (Windows) / `~/Library/Application Support/Tofu Nuggets/` (macOS) | settings.json, index.db, tofu.log (per-user runtime data; see `paths.rs`) |
+| `%APPDATA%\com.tofunuggets.app\` (Windows) / `~/Library/Application Support/Tofu Nuggets/` (macOS) | settings.json, index.db, known_roots.json, tofu.log (per-user runtime data; see `paths.rs`) |
 
 ## Events & commands (cross-window contracts)
 
@@ -111,6 +116,6 @@
 - Watcher rename/move updates the index but doesn't emit `nuggets:changed` → open main window shows stale name until reopened.
 - Rename while app not running orphans the sidecar (old filename no longer matches; note preserved on disk, unlisted). Renaming back relinks.
 - Item moved off the desktop then back: hover+badge relink immediately (sidecar re-read), main list only after next index rebuild (restart).
-- **Notes created on File Explorer items (E1) do not appear in the main-window list yet**: the sidecar is written correctly next to the item and hover shows it, but the watcher and index scan still cover the desktop roots only. Main-window list scope for notes outside the desktop is a deferred decision (MEMORY, "decide at E2") — not expanded in E1 on purpose.
+- **Off-desktop notes are listed, but only their folder is re-scanned, and nothing watches it** (E2 decision, docs/ARCHITECTURE.md §4): saving a note records its parent folder in the known-roots list, which the startup rebuild scans. So a note made on a File Explorer item survives a restart in the main list. What is NOT covered: renaming or deleting such an item while the app runs (no watcher outside the desktop) — the index catches up at the next rebuild, and the sidecar is never lost either way.
 - **Mounted volumes on the macOS desktop are not annotatable**: an external disk shows on the desktop but lives at `/Volumes/<name>`, while name→path resolution only searches the desktop roots, so it is reported as a virtual icon ("has no filesystem path"). Adding `/Volumes` as a root would also pull every mounted disk into the index scan — deliberate decision needed before changing it.
 - **No `window.prompt`/`alert`/`confirm` in UI code**: WKWebView does not implement them (they silently do nothing on macOS), which is why link entry is an in-page bar in the editor. Keep new UI in-page.

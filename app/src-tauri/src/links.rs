@@ -22,11 +22,16 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
         return Err(format!("Link target no longer exists:\n{path}"));
     }
     #[cfg(windows)]
-    if p.is_dir() {
-        shell_open("open", &path, None);
-    } else {
-        // Select the file inside its parent folder.
-        shell_open("open", "explorer.exe", Some(&format!("/select,\"{path}\"")));
+    {
+        if p.is_dir() {
+            shell_open("open", &path, None);
+        } else {
+            // Select the file inside its parent folder.
+            shell_open("open", "explorer.exe", Some(&format!("/select,\"{path}\"")));
+        }
+        // The Explorer window this just opened may not steal foreground from
+        // the calling Tofu window, so the pill layer would not otherwise see it.
+        crate::pill::wake();
     }
     #[cfg(target_os = "macos")]
     {

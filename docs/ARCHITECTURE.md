@@ -70,6 +70,7 @@ TaskList checkboxes render live in the panel; toggling one reflects `data-checke
 - Folder notes: `<dir>\.nuggets\_self.nugget.json` inside the folder itself → note travels when the folder is copied/synced.
 - Rename/move within a watched dir: `notify` crate watcher (wraps `ReadDirectoryChangesW`) renames the sidecar and updates the index. Windows delivers same-dir renames as one two-path event; cross-dir moves arrive as remove+create, so a move out of watched scope leaves a stale sidecar behind (harmless: index rebuilds skip sidecars whose item is missing). Folder notes always travel inside their folder.
 - **Unwritable parents — sidecar redirect (0.1.1 A4)**: some desktop items live where a standard user can't create `.nuggets` (e.g. `C:\Users\Public\Desktop` — Logitech G HUB and other all-users installer shortcuts). When the primary write returns `PermissionDenied`, the sidecar is redirected into the user's own desktop `.nuggets` as `<name>.<pathhash>.nugget.json`, with the item's absolute path stored in a `target` field (the hash keeps same-named items from different folders apart). `read_nugget`/`has_nugget` fall back to the redirect after the primary; `index::scan_root` and the watcher's `sidecar_to_item` prefer `target` when present. Notes stay user documents beside the user's files (survive reinstall/uninstall), just relocated to the writable desktop. Redirect root = `desktop_dirs()[0]`, set once at startup via `storage::set_redirect_root`.
+- **Index scope for notes outside the desktop (E2 decision)**: the startup rebuild scans a root list, and before E1 that list was the desktop dirs — complete, because notes could only exist on desktop icons. Explorer note-creation broke that: the in-session `upsert_item` puts the note in the main-window list immediately, but nothing rescanned that folder on the next launch, so it silently vanished from the list (the sidecar was never at risk). Decision: `roots.rs` records the **parent folder of every saved note** in `known_roots.json`, and the startup rebuild scans desktop dirs + known roots; entries whose folder no longer exists are dropped on load. The **FS watcher stays desktop-only** — an unbounded set of watched user folders is exactly the background cost the budget below rules out, and the only thing it would buy is live index updates for renames/deletes outside the desktop, which the next rebuild fixes anyway. Rejected: watching every known root (cost), indexing on hover (makes a read path write), and a full-disk sidecar scan (minutes, and it would index other people's folders on shared machines). Like the index itself, the list is a rebuildable cache: losing it costs list visibility of old off-desktop notes, never a note.
 - App maintains a lightweight SQLite index (`rusqlite`, DB in app-data dir) purely as a cache for the "show all tagged items" main window; sidecars are the source of truth, index is rebuilt from a full scan at startup and kept fresh by the watcher.
 - **Implemented + tested (Milestone 2)**: `storage.rs` / `index.rs` / `watcher.rs`, 10 unit tests.
 - **Deletion (added post-M7)**: two paths, same backend. Saving a note with no visible text (`storage::is_empty_html` — tags stripped, trimmed) counts as removal: `save_nugget` returns `removed=true`, deletes the sidecar (and the `.nuggets` dir when that leaves it empty), drops the index row, and emits `nuggets:changed`; the badge dot and hover panel disappear on their next refresh since both re-read the sidecar. The main window's per-row Delete button calls the explicit `delete_nugget` command (same removal helper) behind a two-step in-row confirm ("Delete" → "Sure?", 3 s auto-disarm) — deliberately not a native dialog: no extra capability, no focus steal, automatable.
@@ -106,6 +107,60 @@ Small dot/glyph on a corner of each tagged icon so users spot annotated items at
 - Settings: toggle on/off, badge corner, badge size (tied to accessibility scale).
 - Rejected: `IShellIconOverlayIdentifier` shell overlays — only 15 system-wide slots (Dropbox/OneDrive contention), requires shell extension, affects Explorer too.
 
+### 7. Explorer pill (E2, Windows)
+
+The desktop gets a persistent dot layer; File Explorer windows deliberately do
+not (scroll jitter, viewport clipping, Win11 tab churn — MEMORY.md, the pill
+design). Instead each Explorer window gets one small glassy chip at the
+bottom-right of its content area showing how many items in that window's active
+folder carry a note. E2 is count mode only; clicking it to draw dots over the
+visible annotated items is E3.
+
+- **GDI, not a webview.** One `WebviewWindowBuilder` pill per Explorer window
+  would start a WebView2 process tree each (tens of MB, and a user can have five
+  windows open), which alone breaks the RAM budget below. So a pill is a layered
+  window pushed with `UpdateLayeredWindow` exactly like the badge layer, and the
+  chip — rounded rect, border, accent dot, digits — is composited per pixel in
+  `pill.rs`. Text is rendered by GDI into a second DIB and read back as a
+  coverage mask, because GDI writes no alpha. **Measured cost: ~80 KB per pill**
+  (two pills moved the process working set 57.36 → 57.52 MB).
+- **The "glass" is a translucent fill, not acrylic**: `UpdateLayeredWindow` and
+  DWM blur-behind do not compose, and real blur means buying a webview back. Fill
+  alpha, border and accent match the overlay panel's tokens.
+- **Z-order is ownership, not TOPMOST** (E0 verdict C; also the 0.1.4 taskbar
+  lesson): `SetWindowLongPtrW(GWLP_HWNDPARENT)` = the Explorer window. The pill
+  then sits above that window only, auto-hides when it is minimized, and stays
+  below any unrelated app raised over Explorer — which is the desired behavior,
+  not a limitation. An owned popup does **not** follow its owner's moves and does
+  **not** die with it, so an `EVENT_OBJECT_LOCATIONCHANGE` hook (coalesced,
+  60 ms) re-places it and a liveness check destroys it once the owner is gone.
+- **Z-order upkeep**: an owned popup sits above its owner only until the owner is re-activated, which then stacks the owner on top of it — so a pill drawn while its Explorer window was already foreground rendered behind that window and looked absent until a refocus. Every render re-inserts the pill at the slot immediately above its owner (`SetWindowPos` after `GetWindow(owner, GW_HWNDPREV)`, `SWP_NOACTIVATE`), never `HWND_TOP` — so it stays glued above its own Explorer window yet below any unrelated app raised over that window.
+- **Placement**: bottom-right of the SHELLDLL_DefView rect — the item area
+  proper, which already excludes the toolbar, the navigation pane and the status
+  bar — inset 12 logical px, minus `SM_CXVSCROLL` on the x axis to clear the
+  scrollbar. Note this is NOT `IShellBrowser::GetWindow`, which returns the whole
+  ShellTabWindowClass; a pill placed against that rect lands on the status bar's
+  view-mode buttons.
+- **Active tab without a cursor**: E1's hover picks the tab whose view contains
+  the cursor, which the pill cannot do (it must be correct in an unfocused,
+  un-hovered window), and `IsWindowVisible` on tab views is not a reliable
+  discriminator (E1 found it resolving the wrong folder). The pill probes a point
+  in the middle of the frame's content area and walks *down* the child-window
+  tree with `ChildWindowFromPointEx`, which answers "what does this frame put
+  here" regardless of what covers the window — unlike `WindowFromPoint`.
+- **The count is a folder read, never a tree walk**: `storage::count_notes_in_folder`
+  lists that folder's `.nuggets`, the folder itself (for sub-folders carrying
+  their own `_self` note) and the redirect root's `.nuggets` (items whose parent
+  was unwritable). Cost is independent of how many notes exist elsewhere. No UIA
+  is involved in count mode at all — that is E3's cost, paid on click.
+- **Zero notes = no pill** (hidden, not "0"): a chip in every Explorer window
+  would be noise, and in count mode there is nothing behind it to reveal.
+- Accessibility: font-size preset, panel scale, theme and high contrast are read
+  from settings on every redraw and per-monitor DPI from the owner window; high
+  contrast switches to opaque system colors (`GetSysColor`). Reduced Motion needs
+  nothing — the pill has no animation by construction. It also respects the
+  badges on/off setting and tray Pause, both of which destroy every pill.
+
 ## Performance budget (hard requirements)
 
 The pitch is "light layer on top of the desktop" — these are commitments, not aspirations:
@@ -114,10 +169,14 @@ The pitch is "light layer on top of the desktop" — these are commitments, not 
 |---|---|---|
 | Idle, neither desktop nor Explorer foreground | ~0% (10 Hz cursor poll runs but the UIA hit-test is gated off) | ~15–20 MB (core process) |
 | Desktop or File Explorer foreground, watching | <0.1% (10 Hz cursor timer; UIA hit-test only after ~400 ms hover debounce) | core + badge layer (negligible) |
+| Explorer window open but NOT foreground | a 2 s tick that re-enumerates the shell (a couple of windows, sub-ms to low-ms) and re-reads the active folder; below the badge-walk noise in whole-process CPU (see the isolation measurement below) | core + ~80 KB per pill |
+| No Explorer window open | pill has no timer at all and its hooks return immediately | core |
 | Panel/editor visible (WebView2 warm) | UI-bound only | +60–80 MB while warm |
 
 - **Icon count does not affect hover cost**: detection is a single `ElementFromPoint` hit-test at the cursor, not per-icon scanning. 100 icons and 1000 icons cost the same — the Explorer path adds only a per-hit folder-path read (no per-item scan). Badge refresh enumerates tagged-icon rects only — a few ms every few seconds, only while desktop is foreground.
 - **Foreground gate**: the UIA hit-test runs only when the foreground window is the desktop shell or a `CabinetWClass` Explorer window; otherwise the engine does no UIA work (measured 0 ms CPU over 3 s with neither foreground, E1).
+- **Pill gate (E2)**: with no Explorer window open there is no pill and no timer at all — the state the budget cares about. Once any Explorer window exists the tick re-enumerates the shell and re-reads the active folder every time (700 ms while one is foreground, 2 s otherwise). An earlier version skipped the shell read on unfocused ticks and relied on WinEvents to heal folder changes; a change no event delivered then left a stale count until a manual refocus (owner hit this several times). Enumerating a couple of windows is sub-ms to low-ms, bounded by the 2 s cadence, so correctness won over saving it. The move/resize path is the one that does not re-enumerate. Nothing that can change a count while the user looks elsewhere is missed: a folder navigation or tab switch renames the frame and is caught by an `EVENT_OBJECT_NAMECHANGE` hook (low volume, so processed unconditionally), a new or closed window by a class-only `EnumWindows` scan, and `pill::wake()` is called explicitly for the cases no WinEvent reports to a sleeping layer — the editor on save/delete (`notes_changed`), `open_in_explorer` (a window opened from our own foreground window does not steal focus, so it opens in the background), and the tray Pause toggle on resume (pause kills the layer's timer). **The foreground hook filters on `CabinetWClass` in the callback**: an unfiltered version opened the grace window on every foreground change on the desktop and that alone was measurable.
+- **Measuring this is easy to get wrong.** Whole-process CPU is dominated by the badge layer's 2 s UIA walk, which short-circuits only while some window covers the whole virtual screen — so the same build reads 0 ms or 250 ms per 25 s depending on nothing but whether the desktop is covered. The pill's cost was isolated by building with `pill::spawn` removed: **250 ms / 25 s without the pill layer vs 218–234 ms with it**, i.e. the pill is inside the noise. Use that method, not a bare before/after reading, for any future budget claim here.
 - **WebView2 lifecycle**: spawned on first panel/editor show, released after idle timeout (default 5 min, configurable) so RAM returns to core baseline. Cost: first hover after release pays ~300–500 ms cold start; warm hovers render <150 ms.
 - **Measured (Milestone 1, debug build)**: main process 51 MB (release build will shrink), WebView2 warm = **379 MB across 6 processes** — far above the original 60–80 MB estimate. The idle-release mechanism is mandatory to meet budget; implement by destroying/recreating the overlay webview window rather than hiding it.
 - Disk: installer ~10 MB; nuggets 1–5 KB each; SQLite index <1 MB for hundreds of nuggets.

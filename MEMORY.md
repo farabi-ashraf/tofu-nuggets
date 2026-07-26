@@ -199,13 +199,127 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
   _UI_Shell_Common`. Accepted minor regression: desktop hover now gated to
   desktop-foreground (app-focused hover over a visible desktop gap no longer
   fires) — matches the documented "only while desktop foreground" intent.
-- **E2**: pill in count mode — create/track/destroy per window, acrylic
+- **E2**: pill in count mode — create/track/destroy per window, glassy
   styling, accessibility scaling, count refresh on navigation/tab switch.
+  **DONE — `wip-explorer-pill`, PR pending owner verification.** New
+  `pill.rs` (Windows-only) + `roots.rs`; `desktop.rs` gained
+  `explorer_windows()`/`explorer_is_foreground()`; `storage.rs` gained
+  `count_notes_in_folder`. Decisions taken while building:
+  - **GDI layered window per Explorer window, NOT a webview** — a WebView2
+    process tree per pill (times N windows) breaks the RAM budget. Cost of the
+    choice is hand-composited everything (rounded rect, border, accent dot,
+    digits via a GDI text coverage mask, since GDI writes no alpha).
+    **Measured: ~80 KB per pill** (two pills: WS 57.36 → 57.52 MB). Consequence
+    accepted: the "glass" is a translucent fill, not real acrylic —
+    `UpdateLayeredWindow` and DWM blur-behind don't compose.
+  - **Anchor is SHELLDLL_DefView, not `IShellBrowser::GetWindow`.** The latter
+    returns the whole ShellTabWindowClass (nav pane + status bar included) and
+    the first build put the pill on top of the status bar's view-mode buttons.
+    Fixed via `IShellView::GetWindow`; inset 12 logical px, minus `SM_CXVSCROLL`.
+  - **Active tab without a cursor (the E2 unknown)**: probe a point at 3/4 width,
+    1/2 height of the frame and walk *down* with `ChildWindowFromPointEx`, which
+    is unaffected by other apps covering the window (`WindowFromPoint` is not).
+    Falls back to visible-view then first-match.
+  - **Zero notes ⇒ pill hidden**, not "0".
+  - **Idle cost**: no Explorer window ⇒ no timer at all; foreground Explorer ⇒
+    700 ms tick (shell enumeration + folder read) plus a short grace window
+    after Explorer gains focus; unfocused Explorer ⇒ 2 s tick with no shell
+    call and no disk read. Nothing is missed because navigation/tab switch need
+    focus, new/closed windows are caught by a class-only `EnumWindows` scan,
+    and the editor calls `pill::notes_changed()` on save/delete.
+  - **Perf-measurement trap (cost a cycle)**: whole-process CPU is dominated by
+    the BADGE layer's 2 s UIA walk, which short-circuits only while a window
+    covers the whole virtual screen — the same build reads 0 ms or 250 ms per
+    25 s depending only on whether the desktop is covered. The pill's real cost
+    was isolated by building with `pill::spawn` removed: **250 ms / 25 s without
+    it vs 218–234 ms with it** — inside the noise. Always isolate this way
+    before making a budget claim.
+  - **Three bugs found by the owner on the first hardware run, all fixed in the
+    same branch:**
+    1. **No pill after the main window's Open button** until you clicked away
+       and back. A window that just opened is not enumerable through
+       `IShellWindows` for a moment, so the first sync found nothing — and the
+       tick cadence was keyed off *pills existing*, so it disarmed and never
+       retried. Fixed three ways: cadence now keys off Explorer windows
+       existing (cheap class-only `EnumWindows`, which sees a window instantly);
+       a `settle` grace window keeps polling for ~5 ticks after Explorer gains
+       focus; and the full path also runs whenever a window has no pill yet.
+    2. **New tab (Ctrl+T, opens on This PC) kept the previous tab's count.**
+       `explorer_windows()` dropped entries with no filesystem folder, which let
+       the *inactive* tab win the fallback. Now `folder: Option<PathBuf>` and a
+       non-filesystem active tab hides the pill.
+    3. **Lag when moving/resizing.** Every `LOCATIONCHANGE` reset the coalescing
+       timer, so during a continuous drag it never fired; and each fire ran the
+       full shell enumeration. Now a `MOVE_ARMED` flag lets it fire throughout
+       the drag at 30 ms, and the move path does placement only — no shell call.
+    **Second hardware run — two more wake-up gaps (same root: the layer only
+    wakes on WinEvents + its own timer, and it kills the timer when zero
+    Explorer windows exist or when paused):** (a) Open button from the main
+    list still no pill — `ShellExecute` from an already-foreground Tofu window
+    opens Explorer in the BACKGROUND (Windows foreground-lock), so no
+    `CabinetWClass` foreground event fires and, with no other Explorer window
+    open, no live timer notices it. (b) Unpause left no pill until the window
+    was refreshed — pause tears pills down and kills the timer, resume only
+    flips the shared atomic. Fix: `pill::wake()` (FORCE_FULL + arm_full),
+    called from `open_in_explorer` (links.rs) and the tray Pause toggle
+    (tray.rs). CDP-verified: Open on a folder from a cold layer → pill in
+    0.8 s. Design note: do NOT try to fix this with a global window-creation
+    hook — the app knows when it opens Explorer and when it unpauses, so an
+    explicit poke is cheaper and has no perf-budget cost.
+    **Third hardware run — navigation in an UNFOCUSED window missed.** Open a
+    new (windowed) Explorer on Home/This PC (folder None, pill correctly
+    hidden, pill struct created), then navigate to a folder-with-notes while
+    Explorer is not the focused window → no pill until refocus/refresh. Cause:
+    the poll only re-reads a window's folder on the FAST (foreground) tick;
+    `cheap_pass` (unfocused) never re-enumerates, and a pill already existed for
+    that top window so the class scan saw nothing new. Fix: hook
+    `EVENT_OBJECT_NAMECHANGE` — a folder nav / tab switch renames the frame — 
+    filtered to top-level CabinetWClass, forcing a full sync. Low volume, so
+    unconditional (unlike LOCATIONCHANGE). Verified (Explorer unfocused, driven
+    via Shell.Application.Navigate2): This PC→hidden, notes folder→visible 0.7 s,
+    C:\Windows→hidden, back→visible. Idle CPU unchanged (265 ms/25 s, inside
+    the badge-walk noise band). NOT the desktop dots showing behind (owner's
+    guess) — the badge layer is transparent; this was pure nav detection.
+    **Fourth hardware run — pill DRAWN but invisible (z-order).** tofu.log
+    showed `pills=[4:true]` (count 4, drawn) for the Desktop folder yet owner
+    saw nothing until refresh/refocus. Root cause: the pill is an owned popup,
+    and an owned popup sits above its owner only until the owner is
+    re-activated — a pill drawn while its Explorer window was already foreground
+    got stacked BEHIND that window. Every automation "repro" had masked it by
+    calling SetForegroundWindow (which restacks owned windows). Also `render()`
+    early-returned on unchanged bitmap, so it never re-raised. Fix: on every
+    render, insert the pill at the slot just above its owner
+    (`SetWindowPos(pill, GetWindow(owner, GW_HWNDPREV), SWP_NOACTIVATE)`) —
+    NOT `HWND_TOP`, which would float it over unrelated apps. Verified by z-order
+    probe: pill directly above Explorer (idx 64<65); Notepad raised → Notepad
+    top, pill+Explorer below it (pill still just above its own owner); refocus
+    restores. This was the real bug behind every "reveals after refresh" report;
+    the always-full-sync change (prior commit) was necessary too but not
+    sufficient. **Owner-confirmed working 2026-07-26; the temporary `pill:`
+    tofu.log diagnostic was then stripped.**
+    Regression-tested after the fixes: new window gets its pill within 1.2 s
+    with no refocus; pill-to-window gap stays constant (35/36 px) across a
+    15-step drag; This PC window's pill hidden while the folder window's stays
+    visible; minimize/restore; all-closed leaves zero pill HWNDs.
+  - Verified on hardware this session: pill renders with the right count,
+    minimize hides it / restore brings it back, two windows = two pills, an
+    empty folder's pill stays hidden, closing both windows leaves zero pill
+    HWNDs and the app alive. Owner confirmed on the first run: count correct,
+    follows move + resize, themes/contrast/settings/restart all fine.
 - **E3**: pill click → on-demand dots + all dismissal rules.
-- **Deferred design decision (decide at E2, don't overbuild)**: main-window
-  list/index scope once notes exist outside the desktop. Candidate: registry
-  of known roots, appended when a note is created elsewhere; watcher stays
-  desktop-only initially.
+- **Deferred design decision — DECIDED at E2 (implemented in the same PR)**:
+  main-window list/index scope for notes outside the desktop. **Chosen: known
+  roots.** `roots.rs` records the parent folder of every saved note in
+  `known_roots.json` (app-data); the startup index rebuild scans desktop dirs +
+  known roots; roots whose folder no longer exists are dropped on load. **The FS
+  watcher stays desktop-only** — an unbounded watched set is exactly the
+  background cost the budget forbids, and all it would buy is live index updates
+  for renames/deletes outside the desktop, which the next rebuild fixes.
+  Rejected: watching every known root (cost), indexing on hover (turns a read
+  path into a write), full-disk sidecar scan (minutes; indexes other people's
+  folders on shared machines). Rationale written into ARCHITECTURE §4. Residual
+  gap (documented in GLOSSARY): rename/delete of an off-desktop annotated item
+  while the app runs is only reflected after the next rebuild.
 
 macOS side of the big update unchanged: tags (M4) already cover Finder-window
 badges; AX hover inside Finder windows is a later phase (false-trigger bug
