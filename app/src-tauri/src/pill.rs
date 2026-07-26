@@ -232,6 +232,16 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
                     0,
                     flags,
                 );
+                // Folder navigation / tab switch renames the frame.
+                let _nav: HWINEVENTHOOK = SetWinEventHook(
+                    EVENT_OBJECT_NAMECHANGE,
+                    EVENT_OBJECT_NAMECHANGE,
+                    None,
+                    Some(nav_event),
+                    0,
+                    0,
+                    flags,
+                );
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     let _ = TranslateMessage(&msg);
@@ -281,6 +291,35 @@ unsafe extern "system" fn fg_event(
     } else if PILL_COUNT.load(Ordering::Acquire) > 0 {
         // Focus went elsewhere while pills exist: worth one pass to drop the
         // tick cadence and re-place them, but nothing needs re-enumerating.
+        arm_full();
+    }
+}
+
+/// A folder navigation (or a tab switch) renames the Explorer frame to the new
+/// folder, firing `EVENT_OBJECT_NAMECHANGE` on the top-level window. That is the
+/// one cheap signal that a window's *folder* changed without the window being
+/// touched or focused — the poll only re-reads folders on the FAST (foreground)
+/// tick, so a navigation completed while Explorer is not the focused window
+/// (owner-reported: a new windowed Explorer navigated to a folder-with-notes
+/// showed no pill until refocus) would otherwise be missed until the next full
+/// sync. NAMECHANGE is low volume (unlike LOCATIONCHANGE), so it is processed
+/// unconditionally rather than gated on existing pills.
+unsafe extern "system" fn nav_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    idobject: i32,
+    idchild: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if idobject != OBJID_WINDOW.0 || idchild != 0 || hwnd.is_invalid() {
+        return;
+    }
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
+    if String::from_utf16_lossy(&buf[..n]) == "CabinetWClass" {
+        FORCE_FULL.store(true, Ordering::Release);
         arm_full();
     }
 }

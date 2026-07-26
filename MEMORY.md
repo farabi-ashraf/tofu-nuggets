@@ -266,6 +266,20 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
     0.8 s. Design note: do NOT try to fix this with a global window-creation
     hook — the app knows when it opens Explorer and when it unpauses, so an
     explicit poke is cheaper and has no perf-budget cost.
+    **Third hardware run — navigation in an UNFOCUSED window missed.** Open a
+    new (windowed) Explorer on Home/This PC (folder None, pill correctly
+    hidden, pill struct created), then navigate to a folder-with-notes while
+    Explorer is not the focused window → no pill until refocus/refresh. Cause:
+    the poll only re-reads a window's folder on the FAST (foreground) tick;
+    `cheap_pass` (unfocused) never re-enumerates, and a pill already existed for
+    that top window so the class scan saw nothing new. Fix: hook
+    `EVENT_OBJECT_NAMECHANGE` — a folder nav / tab switch renames the frame — 
+    filtered to top-level CabinetWClass, forcing a full sync. Low volume, so
+    unconditional (unlike LOCATIONCHANGE). Verified (Explorer unfocused, driven
+    via Shell.Application.Navigate2): This PC→hidden, notes folder→visible 0.7 s,
+    C:\Windows→hidden, back→visible. Idle CPU unchanged (265 ms/25 s, inside
+    the badge-walk noise band). NOT the desktop dots showing behind (owner's
+    guess) — the badge layer is transparent; this was pure nav detection.
     Regression-tested after the fixes: new window gets its pill within 1.2 s
     with no refocus; pill-to-window gap stays constant (35/36 px) across a
     15-step drag; This PC window's pill hidden while the folder window's stays
