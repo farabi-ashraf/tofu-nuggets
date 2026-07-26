@@ -161,8 +161,6 @@ struct Mgr {
     /// happened to land later (owner-reported: no pill after the main window's
     /// Open button until you clicked away and back).
     settle: u8,
-    /// Temporary field-diagnostic: last summary logged, to log transitions only.
-    last_log: String,
 }
 
 /// Foreground-change grace: how many `FAST_MS` ticks to keep looking.
@@ -209,7 +207,6 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
             pills: Vec::new(),
             tick: None,
             settle: SETTLE_TICKS,
-            last_log: String::new(),
         }));
         SetWindowLongPtrW(mgr_hwnd, GWLP_USERDATA, mgr as isize);
 
@@ -521,25 +518,6 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
     // is open at all there is again no timer whatsoever, which is what the idle
     // budget asks for.
     PILL_COUNT.store(m.pills.len(), Ordering::Release);
-    // TEMP field diagnostic: log only when the observable state changes.
-    let summary = format!(
-        "fg={fg} tops={} full={} folders={:?} pills=[{}]",
-        tops.len(),
-        full as u8,
-        m.pills
-            .iter()
-            .map(|p| p.folder.as_ref().map(|f| f.display().to_string()))
-            .collect::<Vec<_>>(),
-        m.pills
-            .iter()
-            .map(|p| format!("{}:{}", p.count, p.drawn.is_some()))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    if summary != m.last_log {
-        crate::logfile::log(&m.app, &format!("pill: {summary}"));
-        m.last_log = summary;
-    }
     let cadence = if fg || m.settle > 0 {
         Some(FAST_MS)
     } else if tops.is_empty() && m.pills.is_empty() {

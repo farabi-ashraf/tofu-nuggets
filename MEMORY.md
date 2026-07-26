@@ -295,8 +295,8 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
     top, pill+Explorer below it (pill still just above its own owner); refocus
     restores. This was the real bug behind every "reveals after refresh" report;
     the always-full-sync change (prior commit) was necessary too but not
-    sufficient. Diagnostic `pill:` logging to tofu.log stays until owner
-    confirms, then gets stripped.
+    sufficient. **Owner-confirmed working 2026-07-26; the temporary `pill:`
+    tofu.log diagnostic was then stripped.**
     Regression-tested after the fixes: new window gets its pill within 1.2 s
     with no refocus; pill-to-window gap stays constant (35/36 px) across a
     15-step drag; This PC window's pill hidden while the folder window's stays
