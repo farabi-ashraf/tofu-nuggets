@@ -325,7 +325,15 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
   (gate — all dismiss hooks are no-ops while zero dots shown, so zero idle cost),
   `DOTS_DISMISS` (signal drained at the top of `sync`). Pill shows an
   accent-bordered active state while its dots are up (threaded `active` bool
-  through render/draw_pill/compose + the `drawn` cache tuple). Snapshot latency is
+  through render/draw_pill/compose + the `drawn` cache tuple). **Hardware bug #1
+  (fixed, owner-confirmed 2026-07-26): scroll did not dismiss.** Modern Explorer
+  content is a DirectUIHWND — list items are not real child windows, so wheel
+  scroll fires no `EVENT_OBJECT_LOCATIONCHANGE` (the move-hook path caught
+  nothing). Fix: a `WH_MOUSE_LL` hook (`wheel_proc`) installed only while dots are
+  shown (`update_wheel_hook`, tied to `DOTS_ACTIVE` → zero idle cost) dismisses on
+  `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`; plus `EVENT_SYSTEM_SCROLLINGSTART` for
+  scrollbar-drag / keyboard scroll. Both gated on dots + scoped to CabinetWClass.
+  Snapshot latency is
   logged (`dots: N annotated ... snapshot M ms`) so the owner can report the
   100+-item number. Dot appearance/scale reuse the desktop badge (same warm
   accent + white rim, top-right corner nudge, scaled by the pill's accessibility
