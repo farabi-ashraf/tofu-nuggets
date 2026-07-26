@@ -510,6 +510,25 @@ pub fn notes_changed() {
     arm_full();
 }
 
+/// Wake the layer after something outside it changed the world in a way no
+/// WinEvent will report to a sleeping layer:
+///
+/// - **Tray unpause** — pause tears every pill down and kills the tick, so the
+///   layer is idle with no timer; the resume just flips a shared atomic.
+/// - **Opening Explorer from our own windows** (the main-list "Open" button, a
+///   `nugget://` folder link) — `ShellExecute` from an already-foreground Tofu
+///   window opens Explorer in the *background* (Windows foreground-lock), so no
+///   `CabinetWClass` foreground event fires and, with no other Explorer window
+///   open, the layer has no live timer to notice it either.
+///
+/// Forces one full enumeration; the settle grace then keeps polling briefly, so
+/// a window that is not enumerable the instant `ShellExecute` returns is still
+/// caught.
+pub fn wake() {
+    FORCE_FULL.store(true, Ordering::Release);
+    arm_full();
+}
+
 /// Unfocused upkeep, deliberately free of shell calls and of disk reads: drop
 /// pills whose owner died and re-place the rest. Counts do not change here —
 /// every way they can change (navigation, tab switch, a note being saved) has

@@ -66,6 +66,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             PAUSE => {
                 let paused = app.state::<Paused>().toggle();
                 eprintln!("hover {}", if paused { "paused" } else { "resumed" });
+                // The pill layer tears down and stops its timer while paused, so
+                // resuming needs an explicit poke — nothing else pulls it out of
+                // idle (it reads the same Paused flag but is not event-driven off
+                // it). Waking while still paused is a no-op: its sync re-checks
+                // the flag and tears down again.
+                #[cfg(windows)]
+                crate::pill::wake();
             }
             SETTINGS => {
                 logfile::log(app, "tray: settings clicked");

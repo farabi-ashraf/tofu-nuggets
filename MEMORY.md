@@ -252,6 +252,20 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
        timer, so during a continuous drag it never fired; and each fire ran the
        full shell enumeration. Now a `MOVE_ARMED` flag lets it fire throughout
        the drag at 30 ms, and the move path does placement only — no shell call.
+    **Second hardware run — two more wake-up gaps (same root: the layer only
+    wakes on WinEvents + its own timer, and it kills the timer when zero
+    Explorer windows exist or when paused):** (a) Open button from the main
+    list still no pill — `ShellExecute` from an already-foreground Tofu window
+    opens Explorer in the BACKGROUND (Windows foreground-lock), so no
+    `CabinetWClass` foreground event fires and, with no other Explorer window
+    open, no live timer notices it. (b) Unpause left no pill until the window
+    was refreshed — pause tears pills down and kills the timer, resume only
+    flips the shared atomic. Fix: `pill::wake()` (FORCE_FULL + arm_full),
+    called from `open_in_explorer` (links.rs) and the tray Pause toggle
+    (tray.rs). CDP-verified: Open on a folder from a cold layer → pill in
+    0.8 s. Design note: do NOT try to fix this with a global window-creation
+    hook — the app knows when it opens Explorer and when it unpauses, so an
+    explicit poke is cheaper and has no perf-budget cost.
     Regression-tested after the fixes: new window gets its pill within 1.2 s
     with no refocus; pill-to-window gap stays constant (35/36 px) across a
     15-step drag; This PC window's pill hidden while the folder window's stays
