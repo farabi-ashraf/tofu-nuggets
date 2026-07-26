@@ -27,24 +27,27 @@
 //! so a `LOCATIONCHANGE` WinEvent hook repositions it and a liveness check
 //! destroys it once the owner is gone.
 //!
-//! **Idle cost.** With no Explorer window and none foreground there is no pill
-//! and no timer at all. New windows are discovered from
-//! `EVENT_SYSTEM_FOREGROUND`; while one is foreground the tick runs at
-//! `FAST_MS` and re-enumerates the shell (folder and tab changes are poll-only
-//! — no event reports either), and it drops to `SLOW_MS` when focus leaves,
-//! where it only checks the owners are still alive and re-places the pills.
-//! Pause and badges-off destroy every pill and stop the tick outright; the next
-//! Explorer foreground event brings them back.
+//! **Idle cost.** With no Explorer window open there is no pill and no timer at
+//! all — that is the case the perf budget cares about. Once any Explorer window
+//! exists the tick re-enumerates the shell every time: `FAST_MS` while one is
+//! foreground, `SLOW_MS` (2 s) otherwise. An earlier version skipped the shell
+//! read on unfocused ticks to save it, and healed folder/tab changes only from
+//! specific WinEvents; every folder change that no event happened to deliver
+//! then stuck a stale count on screen until a manual refocus (owner hit this
+//! repeatedly — Open-from-list, unpause, a nav-pane click in a windowed,
+//! briefly-unfocused Explorer). Enumerating a couple of windows is sub-ms to
+//! low-ms and is bounded by the 2 s cadence when unfocused, so the layer now
+//! always re-reads and self-heals within one tick. The WinEvent hooks
+//! (`EVENT_SYSTEM_FOREGROUND`, `EVENT_OBJECT_NAMECHANGE`) and `wake()` remain,
+//! purely to react faster than the next tick.
 //!
-//! The foreground tick stays armed even when a pass produced no pill: a window
-//! opened from our own main-window "Open" button is already foreground before
-//! its shell view exists, so the first sync sees nothing and the pill would
-//! never appear until the user clicked away and back.
+//! Window moves are the one path that does NOT re-enumerate (`MOVE_TIMER` →
+//! `cheap_pass`): a drag cannot change which windows exist or what is in their
+//! folders, and running the shell enumeration at drag cadence made the pill
+//! visibly trail the window.
 //!
-//! Window moves are a separate, cheaper path (`MOVE_TIMER` → `cheap_pass`):
-//! nothing about a drag can change which windows exist or what is in their
-//! folders, and running the shell enumeration at drag cadence is what made the
-//! pill visibly trail the window.
+//! Pause and badges-off destroy every pill and stop the tick outright; the tray
+//! toggle pokes `wake()` on resume.
 //!
 //! The count itself is `storage::count_notes_in_folder` — a read of that one
 //! folder. No UIA and no item enumeration is involved in count mode; that is
@@ -158,6 +161,8 @@ struct Mgr {
     /// happened to land later (owner-reported: no pill after the main window's
     /// Open button until you clicked away and back).
     settle: u8,
+    /// Temporary field-diagnostic: last summary logged, to log transitions only.
+    last_log: String,
 }
 
 /// Foreground-change grace: how many `FAST_MS` ticks to keep looking.
@@ -204,6 +209,7 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
             pills: Vec::new(),
             tick: None,
             settle: SETTLE_TICKS,
+            last_log: String::new(),
         }));
         SetWindowLongPtrW(mgr_hwnd, GWLP_USERDATA, mgr as isize);
 
@@ -318,7 +324,8 @@ unsafe extern "system" fn nav_event(
     }
     let mut buf = [0u16; 64];
     let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
-    if String::from_utf16_lossy(&buf[..n]) == "CabinetWClass" {
+    let cls = String::from_utf16_lossy(&buf[..n]);
+    if cls == "CabinetWClass" {
         FORCE_FULL.store(true, Ordering::Release);
         arm_full();
     }
@@ -463,24 +470,25 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
     // Cheap class-only scan (no COM): what Explorer windows exist right now.
     let tops = desktop::explorer_top_windows();
 
-    // A foreground change (or a note being saved) opens a grace window: the
-    // thing it is telling us about may not be enumerable yet.
+    // A foreground change (or a note being saved) opens a grace window that
+    // keeps the FAST cadence briefly, so a window that is not enumerable the
+    // instant it opens is caught quickly rather than at the next slow tick.
     if FORCE_FULL.swap(false, Ordering::AcqRel) {
         m.settle = SETTLE_TICKS;
     }
-    // The expensive shell enumeration is worth running when the user is looking
-    // at Explorer, when a window exists that we have no pill for yet, when a
-    // pill outlived its window, or while a grace window is open. Otherwise
-    // nothing it could discover has changed: navigation and tab switches both
-    // need focus.
-    let full = fg
-        || m.settle > 0
-        || tops.iter().any(|t| !m.pills.iter().any(|p| p.top == *t))
-        || m.pills.iter().any(|p| !tops.contains(&p.top));
-    // The grace window is spent by looking, not by the clock, so this counts
-    // down here and nowhere else — an earlier version decremented only on one
-    // of two exit paths and the tick then never disarmed at all.
     m.settle = m.settle.saturating_sub(1);
+
+    // Re-enumerate on every tick while any Explorer window exists. An earlier
+    // version skipped the shell read on unfocused ticks ("nothing it could
+    // discover has changed") and healed only from specific WinEvents — but a
+    // folder change that no event happened to deliver (owner hit several: a
+    // nav-pane click in a windowed, briefly-unfocused Explorer) then stuck the
+    // stale count on screen until a manual refocus. The shell enumeration of a
+    // couple of windows is cheap (sub-ms to low-ms) and bounded by the SLOW
+    // cadence when unfocused, so correctness wins over saving it. `cheap_pass`
+    // (no shell read) now runs only for the drag reposition path and when the
+    // only work left is disowning a dead window.
+    let full = !tops.is_empty() || m.pills.iter().any(|p| !tops.contains(&p.top));
 
     if full {
         let windows = desktop::explorer_windows();
@@ -513,6 +521,25 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
     // is open at all there is again no timer whatsoever, which is what the idle
     // budget asks for.
     PILL_COUNT.store(m.pills.len(), Ordering::Release);
+    // TEMP field diagnostic: log only when the observable state changes.
+    let summary = format!(
+        "fg={fg} tops={} full={} folders={:?} pills=[{}]",
+        tops.len(),
+        full as u8,
+        m.pills
+            .iter()
+            .map(|p| p.folder.as_ref().map(|f| f.display().to_string()))
+            .collect::<Vec<_>>(),
+        m.pills
+            .iter()
+            .map(|p| format!("{}:{}", p.count, p.drawn.is_some()))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    if summary != m.last_log {
+        crate::logfile::log(&m.app, &format!("pill: {summary}"));
+        m.last_log = summary;
+    }
     let cadence = if fg || m.settle > 0 {
         Some(FAST_MS)
     } else if tops.is_empty() && m.pills.is_empty() {
