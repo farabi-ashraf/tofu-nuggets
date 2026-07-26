@@ -306,7 +306,49 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
     empty folder's pill stays hidden, closing both windows leaves zero pill
     HWNDs and the app alive. Owner confirmed on the first run: count correct,
     follows move + resize, themes/contrast/settings/restart all fine.
-- **E3**: pill click → on-demand dots + all dismissal rules.
+- **E3**: pill click → on-demand dots + all dismissal rules. **DONE —
+  `wip-explorer-dots`, PR pending owner verification. E-PHASES COMPLETE (Explorer
+  update fully built on Windows).** Clicking a pill toggles a one-shot UIA
+  snapshot of the annotated *visible* items and draws a desktop-style badge dot
+  over each, in a second owned layered window that is `WS_EX_TRANSPARENT` so a
+  click where a dot sits falls through to the file (click-through requirement).
+  Snapshot in new `desktop::annotated_item_rects(view, folder)`: `ElementFromHandle`
+  on the shell-view HWND (E0's latency scope) → `FindAll` ListItem/DataItem →
+  filter `IsOffscreen==false` + rect intersects the content area + name resolves
+  to a `has_nugget` path. Dots are **snapshot, never live-tracked** — dismissed
+  (not repositioned) on the first view change: scroll/resize (item
+  `LOCATIONCHANGE` inside the frame, caught by folding a pre-filter check into the
+  existing `move_event`), focus loss (`fg_event`), folder/tab change
+  (`nav_event`/NAMECHANGE). Dismissal is **global** (any qualifying change drops
+  every window's dots) — chosen over per-window bookkeeping because the snapshot
+  is momentary; passes the whole dismissal checklist. Two atomics: `DOTS_ACTIVE`
+  (gate — all dismiss hooks are no-ops while zero dots shown, so zero idle cost),
+  `DOTS_DISMISS` (signal drained at the top of `sync`). Pill shows an
+  accent-bordered active state while its dots are up (threaded `active` bool
+  through render/draw_pill/compose + the `drawn` cache tuple). **Hardware bug #1
+  (fixed, owner-confirmed 2026-07-26): scroll did not dismiss.** Modern Explorer
+  content is a DirectUIHWND — list items are not real child windows, so wheel
+  scroll fires no `EVENT_OBJECT_LOCATIONCHANGE` (the move-hook path caught
+  nothing). Fix: a `WH_MOUSE_LL` hook (`wheel_proc`) installed only while dots are
+  shown (`update_wheel_hook`, tied to `DOTS_ACTIVE` → zero idle cost) dismisses on
+  `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`; plus `EVENT_SYSTEM_SCROLLINGSTART` for
+  scrollbar-drag / keyboard scroll. Both gated on dots + scoped to CabinetWClass.
+  Snapshot latency is
+  logged (`dots: N annotated ... snapshot M ms`) so the owner can report the
+  100+-item number. Dot appearance/scale reuse the desktop badge (same warm
+  accent + white rim, top-right corner nudge, scaled by the pill's accessibility
+  `Style`). Respects pause + badges-off (both destroy dots with the pills).
+  Design guards written into the `pill.rs`/`desktop.rs` `//!` headers +
+  ARCHITECTURE §7: **do not "improve" the snapshot into a tracked overlay.**
+  fmt/clippy clean, 38 tests (added a `draw_dot` clip/centering test).
+  **OWNER-VERIFIED on this machine 2026-07-26 — full checklist passed** (dots on
+  exactly the annotated visible items in details/large/list/content views;
+  dismiss on scroll/focus-loss/move/resize/nav/tab; toggle off; click-through;
+  two windows independent; 100+ latency; pause+badges-off inert; E1/E2/desktop
+  badges unregressed; ~0% CPU dots-off). **PR #38 open, based on
+  `wip-explorer-pill` (E2/#37) so its diff is E3-only — RETARGET to `main` once
+  #37 merges.** E-PHASES DONE; release packaging decision (Windows-only after E
+  vs hold for E+M3+M4) is the owner's, per the reordered-phases note above.
 - **Deferred design decision — DECIDED at E2 (implemented in the same PR)**:
   main-window list/index scope for notes outside the desktop. **Chosen: known
   roots.** `roots.rs` records the parent folder of every saved note in

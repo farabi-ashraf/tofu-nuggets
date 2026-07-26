@@ -49,8 +49,10 @@ can be turned off in Settings.
 chip in the bottom-right of its file list with the number of items in that folder
 that carry a note. It follows the window, tracks the active tab, disappears in
 folders with no notes, and is switched off by the same Settings badge toggle and by
-tray Pause. Clicking it does nothing yet — the next update turns it into a toggle
-that marks the annotated items.
+tray Pause. **Click it** to mark the annotated items: a dot appears on each one you
+can currently see. The dots are a quick snapshot — they clear as soon as you scroll,
+move the window, switch folders or click away — and clicking the chip again turns
+them off. A dot never gets in the way; clicking a file under one still selects it.
 
 **Main window** — tray icon → "Open Tofu Nuggets" (or launching the app again)
 lists every nugget with filter and per-row Open / Edit / Delete. The danger zone in
