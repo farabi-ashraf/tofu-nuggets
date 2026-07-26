@@ -134,6 +134,7 @@ visible annotated items is E3.
   not a limitation. An owned popup does **not** follow its owner's moves and does
   **not** die with it, so an `EVENT_OBJECT_LOCATIONCHANGE` hook (coalesced,
   60 ms) re-places it and a liveness check destroys it once the owner is gone.
+- **Z-order upkeep**: an owned popup sits above its owner only until the owner is re-activated, which then stacks the owner on top of it — so a pill drawn while its Explorer window was already foreground rendered behind that window and looked absent until a refocus. Every render re-inserts the pill at the slot immediately above its owner (`SetWindowPos` after `GetWindow(owner, GW_HWNDPREV)`, `SWP_NOACTIVATE`), never `HWND_TOP` — so it stays glued above its own Explorer window yet below any unrelated app raised over that window.
 - **Placement**: bottom-right of the SHELLDLL_DefView rect — the item area
   proper, which already excludes the toolbar, the navigation pane and the status
   bar — inset 12 logical px, minus `SM_CXVSCROLL` on the x axis to clear the

@@ -280,6 +280,23 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
     C:\Windows→hidden, back→visible. Idle CPU unchanged (265 ms/25 s, inside
     the badge-walk noise band). NOT the desktop dots showing behind (owner's
     guess) — the badge layer is transparent; this was pure nav detection.
+    **Fourth hardware run — pill DRAWN but invisible (z-order).** tofu.log
+    showed `pills=[4:true]` (count 4, drawn) for the Desktop folder yet owner
+    saw nothing until refresh/refocus. Root cause: the pill is an owned popup,
+    and an owned popup sits above its owner only until the owner is
+    re-activated — a pill drawn while its Explorer window was already foreground
+    got stacked BEHIND that window. Every automation "repro" had masked it by
+    calling SetForegroundWindow (which restacks owned windows). Also `render()`
+    early-returned on unchanged bitmap, so it never re-raised. Fix: on every
+    render, insert the pill at the slot just above its owner
+    (`SetWindowPos(pill, GetWindow(owner, GW_HWNDPREV), SWP_NOACTIVATE)`) —
+    NOT `HWND_TOP`, which would float it over unrelated apps. Verified by z-order
+    probe: pill directly above Explorer (idx 64<65); Notepad raised → Notepad
+    top, pill+Explorer below it (pill still just above its own owner); refocus
+    restores. This was the real bug behind every "reveals after refresh" report;
+    the always-full-sync change (prior commit) was necessary too but not
+    sufficient. Diagnostic `pill:` logging to tofu.log stays until owner
+    confirms, then gets stripped.
     Regression-tested after the fixes: new window gets its pill within 1.2 s
     with no refocus; pill-to-window gap stays constant (35/36 px) across a
     15-step drag; This PC window's pill hidden while the folder window's stays

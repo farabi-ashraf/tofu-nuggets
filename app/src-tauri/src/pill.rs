@@ -685,6 +685,34 @@ fn render(m: &mut Mgr, idx: usize) {
         return;
     };
 
+    // Keep the pill glued directly above its owner on EVERY render, before the
+    // unchanged-skip below. An owned popup sits above its owner only until the
+    // owner is re-activated, which then stacks the owner on top of it — so a
+    // pill drawn while its Explorer window was already foreground stayed hidden
+    // behind that window until the user refocused/refreshed it (owner-reported:
+    // the count was logged as drawn, but invisible).
+    //
+    // Inserting at the slot just above the owner — not `HWND_TOP` — is what
+    // fixes it without breaking the other requirement: if another app is raised
+    // over Explorer, the pill stays just above Explorer and therefore below that
+    // app, rather than floating over everything. `SWP_NOACTIVATE` keeps focus in
+    // Explorer.
+    let owner = m.pills[idx].top;
+    unsafe {
+        let above_owner = GetWindow(owner, GW_HWNDPREV).unwrap_or(HWND_TOP);
+        if above_owner != hwnd {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(above_owner),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+        }
+    }
+
     if m.pills[idx].drawn == Some((count, style, anchor)) {
         return;
     }
