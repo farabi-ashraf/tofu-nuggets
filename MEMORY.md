@@ -340,8 +340,15 @@ window: a **pill** — small glassy acrylic toggle, styled like the app.
   `Style`). Respects pause + badges-off (both destroy dots with the pills).
   Design guards written into the `pill.rs`/`desktop.rs` `//!` headers +
   ARCHITECTURE §7: **do not "improve" the snapshot into a tracked overlay.**
-  fmt/clippy clean, 38 tests (added a `draw_dot` clip/centering test). Verified on
-  hardware: PENDING owner run.
+  fmt/clippy clean, 38 tests (added a `draw_dot` clip/centering test).
+  **OWNER-VERIFIED on this machine 2026-07-26 — full checklist passed** (dots on
+  exactly the annotated visible items in details/large/list/content views;
+  dismiss on scroll/focus-loss/move/resize/nav/tab; toggle off; click-through;
+  two windows independent; 100+ latency; pause+badges-off inert; E1/E2/desktop
+  badges unregressed; ~0% CPU dots-off). **PR #38 open, based on
+  `wip-explorer-pill` (E2/#37) so its diff is E3-only — RETARGET to `main` once
+  #37 merges.** E-PHASES DONE; release packaging decision (Windows-only after E
+  vs hold for E+M3+M4) is the owner's, per the reordered-phases note above.
 - **Deferred design decision — DECIDED at E2 (implemented in the same PR)**:
   main-window list/index scope for notes outside the desktop. **Chosen: known
   roots.** `roots.rs` records the parent folder of every saved note in
