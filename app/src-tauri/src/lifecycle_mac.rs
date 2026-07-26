@@ -65,7 +65,7 @@ pub fn install(app: &AppHandle) {
             logfile::log(app, "delegate override: delegate class nil");
             return;
         }
-        let cls_ptr = cls as *const objc2::ffi::objc_class;
+        let cls_ptr = cls as *mut objc2::ffi::objc_class;
 
         // Method type encoding `BOOL(id, SEL, id)`. The runtime uses this only
         // for introspection/forwarding, never for normal dispatch — AppKit
