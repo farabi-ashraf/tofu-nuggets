@@ -107,14 +107,13 @@ Small dot/glyph on a corner of each tagged icon so users spot annotated items at
 - Settings: toggle on/off, badge corner, badge size (tied to accessibility scale).
 - Rejected: `IShellIconOverlayIdentifier` shell overlays — only 15 system-wide slots (Dropbox/OneDrive contention), requires shell extension, affects Explorer too.
 
-### 7. Explorer pill (E2, Windows)
+### 7. Explorer pill + dots (E2/E3, Windows)
 
 The desktop gets a persistent dot layer; File Explorer windows deliberately do
 not (scroll jitter, viewport clipping, Win11 tab churn — MEMORY.md, the pill
 design). Instead each Explorer window gets one small glassy chip at the
 bottom-right of its content area showing how many items in that window's active
-folder carry a note. E2 is count mode only; clicking it to draw dots over the
-visible annotated items is E3.
+folder carry a note, and clicking that chip reveals the dots on demand (E3).
 
 - **GDI, not a webview.** One `WebviewWindowBuilder` pill per Explorer window
   would start a WebView2 process tree each (tens of MB, and a user can have five
@@ -152,9 +151,30 @@ visible annotated items is E3.
   lists that folder's `.nuggets`, the folder itself (for sub-folders carrying
   their own `_self` note) and the redirect root's `.nuggets` (items whose parent
   was unwritable). Cost is independent of how many notes exist elsewhere. No UIA
-  is involved in count mode at all — that is E3's cost, paid on click.
+  is involved in count mode at all — that is the dots' cost, paid on click.
 - **Zero notes = no pill** (hidden, not "0"): a chip in every Explorer window
   would be noise, and in count mode there is nothing behind it to reveal.
+- **Click → dots, a snapshot (E3)**: clicking the pill takes a one-shot UIA
+  snapshot of the annotated *visible* items (`desktop::annotated_item_rects`,
+  scoped to the shell-view HWND with `ElementFromHandle` to stay in the
+  ~90–145 ms band E0 measured) and draws a desktop-style badge dot over each in a
+  second owned layered window — this one `WS_EX_TRANSPARENT`, so a click where a
+  dot sits falls through to the file. Visible = `IsOffscreen == false` AND the
+  rect intersects the content area (virtualized views drop scrolled-out items and
+  leave a one-row fringe; list view materializes everything, so the rect test
+  carries there). **This is a snapshot and must stay one.** It is deliberately
+  *not* live-tracked — no scroll-sync, no viewport clipping math, no per-tab
+  reposition state, which is the entire reason the Explorer surface is a
+  click-to-reveal pill and not a persistent overlay. Instead the dots are
+  *dismissed* on the first thing that could invalidate them: a scroll or resize
+  (item `EVENT_OBJECT_LOCATIONCHANGE` inside the frame), focus loss
+  (`EVENT_SYSTEM_FOREGROUND`), a window move, a folder navigation or tab switch
+  (`EVENT_OBJECT_NAMECHANGE`). Dismissal is global (any qualifying change drops
+  every window's dots) — simpler than per-window bookkeeping and momentary by
+  design. The pill shows an accent-bordered active state while its dots are up;
+  clicking again toggles off. All the dismissal hooks are gated on dots actually
+  being shown (`DOTS_ACTIVE`), so this machinery costs nothing in the common case
+  and does not touch the idle budget.
 - Accessibility: font-size preset, panel scale, theme and high contrast are read
   from settings on every redraw and per-monitor DPI from the owner window; high
   contrast switches to opaque system colors (`GetSysColor`). Reduced Motion needs

@@ -36,6 +36,11 @@
 //! independently of z-order, unlike `WindowFromPoint`. Still no tab-switch
 //! event, so `pill.rs` polls.
 //!
+//! E3 adds `annotated_item_rects()`: a one-shot UIA snapshot of the annotated,
+//! visible items in one view, scoped to its shell-view HWND, which the pill
+//! draws dots over on click. It is deliberately a snapshot — taken once and
+//! discarded on the first view change — not a tracked overlay.
+//!
 //! Infotips: the desktop trick (`suppress_desktop_infotips`, clearing
 //! `LVS_EX_INFOTIP`) targets a Win32 SysListView32. Modern Explorer content
 //! views (Win10 and Win11) are `DirectUIHWND`, not a ListView, so that message
@@ -45,7 +50,7 @@
 //! Explorer infotip suppression is implemented (see the E1 PR notes).
 
 use std::cell::OnceCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use windows::core::*;
 use windows::Win32::Foundation::{HWND, LPARAM, MAX_PATH, POINT, RECT, WPARAM};
@@ -57,6 +62,7 @@ use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::icons::{DesktopIcons, Icon, IconRect};
+use crate::storage;
 
 /// Service id for the shell browser behind a ShellWindows item (E0).
 const SID_STOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4c96be40_915c_11cf_99d3_00aa004ae837);
@@ -528,6 +534,112 @@ pub fn explorer_windows() -> Vec<ExplorerWindow> {
                 view: tabs[pick].view,
                 folder: tabs[pick].folder.clone(),
             });
+        }
+    });
+    out
+}
+
+thread_local! {
+    /// Per-thread IUIAutomation for the pill layer's dots snapshot (E3). UIA
+    /// clients are apartment-bound, so this cannot be a process-wide static; the
+    /// pill thread already inits STA COM (`init_com_for_thread`).
+    static PILL_UIA: OnceCell<IUIAutomation> = const { OnceCell::new() };
+}
+
+fn rects_intersect(a: &RECT, b: &RECT) -> bool {
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
+/// Screen rects of the annotated, *visible* items in one Explorer content view
+/// — the one-shot snapshot the pill draws dots over on click (E3).
+///
+/// **Snapshot, never live-tracked** (the whole point of the pill design): the
+/// caller takes this once on click and discards it on the first change to the
+/// view. There is deliberately no scroll-sync or reposition path.
+///
+/// `view` is the active tab's SHELLDLL_DefView window (the same handle
+/// `ExplorerWindow::view` carries). Scoping the UIA `FindAll` to it with
+/// `ElementFromHandle` — rather than walking the whole frame — is what keeps the
+/// snapshot in the ~90–145 ms band the E0 spike measured for ~120 items.
+///
+/// Visible filter is E0 verdict B: `IsOffscreen == false` AND the item's
+/// bounding rect intersects the view's client area. Virtualized views drop
+/// scrolled-out items from the tree entirely and leave a one-row `IsOffscreen`
+/// fringe; list view materializes everything, so the rect test is load-bearing
+/// there. An item counts as annotated when its name resolves to a path under
+/// `folder` that has a sidecar (`storage::has_nugget`).
+pub fn annotated_item_rects(view: HWND, folder: &Path) -> Vec<RECT> {
+    let mut out: Vec<RECT> = Vec::new();
+    let mut client = RECT::default();
+    unsafe {
+        if !IsWindow(Some(view)).as_bool() || GetWindowRect(view, &mut client).is_err() {
+            return out;
+        }
+    }
+    let dirs = [folder.to_path_buf()];
+    PILL_UIA.with(|cell| {
+        if cell.get().is_none() {
+            if let Ok(a) = unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            } {
+                let _ = cell.set(a);
+            }
+        }
+        let Some(auto) = cell.get() else {
+            return;
+        };
+        unsafe {
+            let Ok(root) = auto.ElementFromHandle(view) else {
+                return;
+            };
+            // Items are ListItem (icon/list/content views) or DataItem (details).
+            let Ok(li) = auto.CreatePropertyCondition(
+                UIA_ControlTypePropertyId,
+                &VARIANT::from(UIA_ListItemControlTypeId.0),
+            ) else {
+                return;
+            };
+            let Ok(di) = auto.CreatePropertyCondition(
+                UIA_ControlTypePropertyId,
+                &VARIANT::from(UIA_DataItemControlTypeId.0),
+            ) else {
+                return;
+            };
+            let Ok(cond) = auto.CreateOrCondition(&li, &di) else {
+                return;
+            };
+            let Ok(items) = root.FindAll(TreeScope_Descendants, &cond) else {
+                return;
+            };
+            let len = items.Length().unwrap_or(0);
+            for i in 0..len {
+                let Ok(el) = items.GetElement(i) else {
+                    continue;
+                };
+                // Scrolled-out fringe: present in the tree but flagged offscreen.
+                if el.CurrentIsOffscreen().map(|b| b.as_bool()).unwrap_or(true) {
+                    continue;
+                }
+                let Ok(name) = el.CurrentName() else {
+                    continue;
+                };
+                let name = name.to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let Ok(rect) = el.CurrentBoundingRectangle() else {
+                    continue;
+                };
+                if !rects_intersect(&rect, &client) {
+                    continue;
+                }
+                let annotated = resolve_path(&name, &dirs)
+                    .map(|p| storage::has_nugget(&p))
+                    .unwrap_or(false);
+                if annotated {
+                    out.push(rect);
+                }
+            }
         }
     });
     out
