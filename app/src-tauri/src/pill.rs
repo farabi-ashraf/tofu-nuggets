@@ -1,8 +1,20 @@
 //! Explorer pill: one small glassy toggle per File Explorer window showing how
-//! many items in that window's current folder carry a note (E2, count mode).
+//! many items in that window's current folder carry a note.
 //!
-//! Clicking it is logged and otherwise does nothing yet — drawing dots over the
-//! annotated items is E3.
+//! **Click → dots (E3).** Clicking the pill toggles a one-shot UIA snapshot of
+//! the annotated *visible* items and draws a badge dot over each, in a
+//! click-through layered window owned by the same Explorer top HWND. The pill
+//! shows an active (accent-bordered) state while dots are up; clicking again
+//! toggles them off. The dots are a **snapshot, never live-tracked** — the whole
+//! reason the design is a pill and not a tracked overlay — so they are dismissed
+//! on the first change to the view rather than followed: scroll, window focus
+//! loss, move/resize, and folder/tab change all tear them down (`DOTS_DISMISS`,
+//! fed by the WinEvent hooks — and a `WH_MOUSE_LL` hook for wheel scroll, which
+//! a DirectUIHWND list reports no window event for). Do not "improve" this into something that
+//! repositions dots on scroll; the snapshot model is deliberate. The dots
+//! window is `WS_EX_TRANSPARENT`, so a click where a dot sits still reaches the
+//! file underneath, and the snapshot rects come from
+//! `desktop::annotated_item_rects` (scoped to the shell-view HWND for latency).
 //!
 //! **Rendering is GDI, not a webview.** A `WebviewWindowBuilder` pill would be
 //! the cheap way to reuse the app's acrylic styling, but each one starts a
@@ -115,6 +127,23 @@ static PILL_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// instead of taking the cheap unfocused path. A window that just closed or
 /// just opened is only visible to the enumeration.
 static FORCE_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How many pills currently have their dots snapshot shown (E3). Read from the
+/// hook threads to gate the dismissal work: the dots-dismiss checks are pure
+/// overhead while no dots are on screen, which is almost always.
+static DOTS_ACTIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Set by any hook that observed a change which must dismiss the dots (scroll,
+/// move/resize, folder/tab change, focus loss). The next sync tears every dots
+/// overlay down. Global by design: the snapshot is momentary, so dismissing all
+/// of them on any qualifying change is simpler than per-window bookkeeping and
+/// passes every dismissal rule.
+static DOTS_DISMISS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Low-level mouse hook handle, live only while dots are shown. Modern Explorer
+/// content is a DirectUIHWND: its list items are not real child windows, so
+/// wheel scrolling fires no `EVENT_OBJECT_LOCATIONCHANGE` for the move hook to
+/// catch. A `WH_MOUSE_LL` hook sees the wheel directly. Installed on the pill
+/// thread when the first dots go up and removed when the last come down, so it
+/// costs nothing while no dots are on screen.
+static WHEEL_HOOK: AtomicIsize = AtomicIsize::new(0);
 
 pub fn spawn(app: AppHandle, paused: Paused, settings: settings::Shared) {
     std::thread::Builder::new()
@@ -141,9 +170,31 @@ struct Pill {
     hwnd: HWND,
     folder: Option<PathBuf>,
     count: usize,
-    /// Last pushed appearance + placement; a tick that changes neither skips
-    /// the redraw entirely.
-    drawn: Option<(usize, Style, RECT)>,
+    /// Whether this window's dots snapshot is currently shown (E3), and the
+    /// click-through layered window drawing it. `dots_on` also drives the pill's
+    /// active-state appearance.
+    dots_on: bool,
+    dots_hwnd: Option<HWND>,
+    /// Last pushed appearance + placement; a tick that changes none of these
+    /// skips the redraw entirely.
+    drawn: Option<(usize, Style, RECT, bool)>,
+}
+
+/// Destroy a pill's own window and its dots overlay (if any). An owned popup
+/// survives its owner's death, so every teardown path must go through here.
+fn destroy_pill(p: &Pill) {
+    unsafe {
+        if let Some(d) = p.dots_hwnd {
+            let _ = DestroyWindow(d);
+        }
+        let _ = DestroyWindow(p.hwnd);
+    }
+}
+
+fn refresh_dots_active(m: &Mgr) {
+    let n = m.pills.iter().filter(|p| p.dots_on).count();
+    DOTS_ACTIVE.store(n, Ordering::Release);
+    update_wheel_hook(n);
 }
 
 struct Mgr {
@@ -245,6 +296,19 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
                     0,
                     flags,
                 );
+                // Scrollbar-drag / keyboard scroll: the frame enters scrolling
+                // mode. (Wheel scroll is caught separately by WH_MOUSE_LL — a
+                // DirectUIHWND list fires no per-item window events.) Only used
+                // to dismiss the dots snapshot, so it is gated on dots existing.
+                let _scroll: HWINEVENTHOOK = SetWinEventHook(
+                    EVENT_SYSTEM_SCROLLINGSTART,
+                    EVENT_SYSTEM_SCROLLINGSTART,
+                    None,
+                    Some(scroll_event),
+                    0,
+                    0,
+                    flags,
+                );
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     let _ = TranslateMessage(&msg);
@@ -279,6 +343,13 @@ unsafe extern "system" fn fg_event(
 ) {
     if idobject != OBJID_WINDOW.0 || idchild != 0 || hwnd.is_invalid() {
         return;
+    }
+    // A foreground change means some window's focus moved: dismiss the dots
+    // snapshot (focus-loss rule). Clicking the pill itself does not reach here —
+    // it is WS_EX_NOACTIVATE, so it raises no foreground event.
+    if DOTS_ACTIVE.load(Ordering::Acquire) > 0 {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
     }
     // Filter by class here rather than in the sync. Foreground changes are
     // constant on a busy desktop, and an unfiltered hook opened the
@@ -323,8 +394,68 @@ unsafe extern "system" fn nav_event(
     let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
     let cls = String::from_utf16_lossy(&buf[..n]);
     if cls == "CabinetWClass" {
+        // A folder navigation or tab switch invalidates the dots snapshot.
+        if DOTS_ACTIVE.load(Ordering::Acquire) > 0 {
+            DOTS_DISMISS.store(true, Ordering::Release);
+        }
         FORCE_FULL.store(true, Ordering::Release);
         arm_full();
+    }
+}
+
+/// The frame entered scrolling mode (scrollbar drag / keyboard). Invalidates the
+/// dots snapshot; gated on dots existing and scoped to Explorer frames.
+unsafe extern "system" fn scroll_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _idobject: i32,
+    _idchild: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if hwnd.is_invalid() || DOTS_ACTIVE.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    if class_name(unsafe { GetAncestor(hwnd, GA_ROOT) }) == "CabinetWClass" {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
+    }
+}
+
+/// Low-level mouse hook: wheel scrolling a DirectUIHWND list dismisses the dots
+/// snapshot (that scroll fires no window event otherwise). Live only while dots
+/// are shown (`update_wheel_hook`).
+unsafe extern "system" fn wheel_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code >= 0
+        && (wparam.0 as u32 == WM_MOUSEWHEEL || wparam.0 as u32 == WM_MOUSEHWHEEL)
+        && DOTS_ACTIVE.load(Ordering::Acquire) > 0
+    {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Install or remove the wheel hook to match whether any dots are shown. Called
+/// on the pill thread (the one that pumps the messages the hook is dispatched
+/// on) whenever `DOTS_ACTIVE` changes.
+fn update_wheel_hook(active: usize) {
+    let installed = WHEEL_HOOK.load(Ordering::Acquire);
+    unsafe {
+        if active > 0 && installed == 0 {
+            let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).ok();
+            if let Some(h) = hinstance {
+                if let Ok(hook) =
+                    SetWindowsHookExW(WH_MOUSE_LL, Some(wheel_proc), Some(h.into()), 0)
+                {
+                    WHEEL_HOOK.store(hook.0 as isize, Ordering::Release);
+                }
+            }
+        } else if active == 0 && installed != 0 {
+            let _ = UnhookWindowsHookEx(HHOOK(installed as *mut core::ffi::c_void));
+            WHEEL_HOOK.store(0, Ordering::Release);
+        }
     }
 }
 
@@ -344,8 +475,19 @@ fn arm_full() {
     }
 }
 
+/// Class name of a window, for the hook threads (which lack `desktop::class_of`).
+fn class_name(hwnd: HWND) -> String {
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
+    String::from_utf16_lossy(&buf[..n])
+}
+
 /// An owned popup does not follow its owner's moves (E0 verdict C), so every
-/// top-level move/resize re-places the pills.
+/// top-level move/resize re-places the pills. This hook doubles as the dots
+/// dismissal signal for scroll and resize: both relocate the list items, firing
+/// `EVENT_OBJECT_LOCATIONCHANGE` on windows inside the Explorer frame. Item
+/// relocation is not an `OBJID_WINDOW` change, so the dots check runs BEFORE the
+/// top-level filter the pill reposition needs.
 unsafe extern "system" fn move_event(
     _hook: HWINEVENTHOOK,
     _event: u32,
@@ -355,7 +497,20 @@ unsafe extern "system" fn move_event(
     _thread: u32,
     _time: u32,
 ) {
-    if idobject != OBJID_WINDOW.0 || idchild != 0 || hwnd.is_invalid() {
+    if hwnd.is_invalid() {
+        return;
+    }
+    // Any location change inside an Explorer frame (scroll, resize, relayout)
+    // invalidates the snapshot. Gated on dots existing so this does no work in
+    // the common case. Scoped to CabinetWClass so unrelated churn (the tray
+    // clock, animations elsewhere) does not dismiss the dots.
+    if DOTS_ACTIVE.load(Ordering::Acquire) > 0
+        && class_name(unsafe { GetAncestor(hwnd, GA_ROOT) }) == "CabinetWClass"
+    {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
+    }
+    if idobject != OBJID_WINDOW.0 || idchild != 0 {
         return;
     }
     if unsafe { GetAncestor(hwnd, GA_ROOT) } != hwnd {
@@ -417,25 +572,16 @@ fn with_mgr(hwnd: HWND, f: impl FnOnce(&mut Mgr)) {
     }
 }
 
-/// E2 is count mode only: a click is acknowledged in the log and nothing else
-/// happens. E3 turns this into the dots snapshot.
+/// A click toggles this window's dots snapshot on or off (E3). Runs on the pill
+/// thread, which holds the STA COM apartment the snapshot's shell/UIA chain
+/// needs.
 unsafe extern "system" fn pill_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_LBUTTONUP => {
             let mgr = MGR_HWND.load(Ordering::Acquire);
             if mgr != 0 {
                 with_mgr(HWND(mgr as *mut core::ffi::c_void), |m| {
-                    let folder = m
-                        .pills
-                        .iter()
-                        .find(|p| p.hwnd == hwnd)
-                        .and_then(|p| p.folder.as_ref())
-                        .map(|f| f.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".into());
-                    crate::logfile::log(
-                        &m.app,
-                        &format!("pill clicked for '{folder}' (dots land in E3)"),
-                    );
+                    toggle_dots(m, hwnd)
                 });
             }
             LRESULT(0)
@@ -452,6 +598,13 @@ unsafe extern "system" fn pill_wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 /// Reconcile the pill set with the live Explorer windows, then redraw whatever
 /// changed. The single entry point for every trigger (tick, move, foreground).
 fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
+    // A hook observed something that invalidates every dots snapshot (scroll,
+    // move/resize, folder/tab change, focus loss). Tear them down before the
+    // rest of the reconcile, and reset each pill's active appearance.
+    if DOTS_DISMISS.swap(false, Ordering::AcqRel) {
+        dismiss_all_dots(m);
+    }
+
     let badges_on = m.settings.lock().map(|s| s.badges).unwrap_or(true);
     if m.paused.is_paused() || !badges_on {
         // Nothing to show and nothing to watch: tear down completely rather
@@ -497,9 +650,7 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
             let keep =
                 unsafe { IsWindow(Some(p.top)).as_bool() } && live.contains(&(p.top.0 as isize));
             if !keep {
-                unsafe {
-                    let _ = DestroyWindow(p.hwnd);
-                }
+                destroy_pill(p);
             }
             keep
         });
@@ -518,6 +669,9 @@ fn sync(mgr_hwnd: HWND, m: &mut Mgr) {
     // is open at all there is again no timer whatsoever, which is what the idle
     // budget asks for.
     PILL_COUNT.store(m.pills.len(), Ordering::Release);
+    // A dropped pill takes its dots with it (destroy_pill), so keep the active
+    // count honest for the hook gates.
+    refresh_dots_active(m);
     let cadence = if fg || m.settle > 0 {
         Some(FAST_MS)
     } else if tops.is_empty() && m.pills.is_empty() {
@@ -581,13 +735,12 @@ fn cheap_pass(m: &mut Mgr) {
     m.pills.retain(|p| {
         let keep = unsafe { IsWindow(Some(p.top)).as_bool() };
         if !keep {
-            unsafe {
-                let _ = DestroyWindow(p.hwnd);
-            }
+            destroy_pill(p);
         }
         keep
     });
     PILL_COUNT.store(m.pills.len(), Ordering::Release);
+    refresh_dots_active(m);
     for idx in 0..m.pills.len() {
         render(m, idx);
     }
@@ -595,9 +748,90 @@ fn cheap_pass(m: &mut Mgr) {
 
 fn destroy_all(m: &mut Mgr) {
     for p in m.pills.drain(..) {
-        unsafe {
-            let _ = DestroyWindow(p.hwnd);
+        destroy_pill(&p);
+    }
+    DOTS_ACTIVE.store(0, Ordering::Release);
+    update_wheel_hook(0);
+}
+
+/// Toggle one window's dots snapshot. On → take a fresh UIA snapshot and draw a
+/// dot over each annotated visible item; off → destroy the overlay. Either way
+/// the pill is re-rendered so its active state reflects the change.
+fn toggle_dots(m: &mut Mgr, pill_hwnd: HWND) {
+    let Some(idx) = m.pills.iter().position(|p| p.hwnd == pill_hwnd) else {
+        return;
+    };
+    if m.pills[idx].dots_on {
+        clear_dots(&mut m.pills[idx]);
+    } else {
+        show_dots(m, idx);
+    }
+    refresh_dots_active(m);
+    render(m, idx);
+}
+
+/// Take the one-shot snapshot for pill `idx` and push its dots overlay.
+fn show_dots(m: &mut Mgr, idx: usize) {
+    let view = m.pills[idx].view;
+    let Some(folder) = m.pills[idx].folder.clone() else {
+        return;
+    };
+    let owner = m.pills[idx].top;
+
+    let t0 = std::time::Instant::now();
+    let rects = desktop::annotated_item_rects(view, &folder);
+    let dt = t0.elapsed().as_millis();
+    crate::logfile::log(
+        &m.app,
+        &format!(
+            "dots: {} annotated item(s) for '{}' — snapshot {dt} ms",
+            rects.len(),
+            folder.display()
+        ),
+    );
+
+    let Some(anchor) = content_rect(view) else {
+        return;
+    };
+    let hwnd = match m.pills[idx].dots_hwnd {
+        Some(h) => h,
+        None => {
+            let Some(h) = create_dots_window(owner) else {
+                return;
+            };
+            m.pills[idx].dots_hwnd = Some(h);
+            h
         }
+    };
+    let style = Style::current(&m.settings, owner);
+    if draw_dots(hwnd, owner, anchor, &rects, style) {
+        m.pills[idx].dots_on = true;
+    }
+}
+
+/// Hide and forget one pill's dots overlay.
+fn clear_dots(p: &mut Pill) {
+    if let Some(h) = p.dots_hwnd {
+        unsafe {
+            let _ = ShowWindow(h, SW_HIDE);
+        }
+    }
+    p.dots_on = false;
+}
+
+/// Drop every dots overlay and repaint the affected pills to inactive.
+fn dismiss_all_dots(m: &mut Mgr) {
+    let mut touched = Vec::new();
+    for (idx, p) in m.pills.iter_mut().enumerate() {
+        if p.dots_on {
+            clear_dots(p);
+            touched.push(idx);
+        }
+    }
+    DOTS_ACTIVE.store(0, Ordering::Release);
+    update_wheel_hook(0);
+    for idx in touched {
+        render(m, idx);
     }
 }
 
@@ -615,6 +849,8 @@ fn upsert(m: &mut Mgr, w: &ExplorerWindow) {
                 hwnd,
                 folder: None,
                 count: 0,
+                dots_on: false,
+                dots_hwnd: None,
                 drawn: None,
             });
             m.pills.len() - 1
@@ -646,8 +882,10 @@ fn render(m: &mut Mgr, idx: usize) {
     let hwnd = m.pills[idx].hwnd;
 
     // Empty folder: no pill. A "0" chip in every Explorer window is noise, and
-    // in count mode there is nothing behind it to reveal.
+    // in count mode there is nothing behind it to reveal. If dots were up (a
+    // note under this folder was just deleted, say), they go with it.
     if count == 0 {
+        clear_dots(&mut m.pills[idx]);
         unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
@@ -656,12 +894,14 @@ fn render(m: &mut Mgr, idx: usize) {
     }
 
     let Some(anchor) = content_rect(m.pills[idx].view) else {
+        clear_dots(&mut m.pills[idx]);
         unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
         m.pills[idx].drawn = None;
         return;
     };
+    let active = m.pills[idx].dots_on;
 
     // Keep the pill glued directly above its owner on EVERY render, before the
     // unchanged-skip below. An owned popup sits above its owner only until the
@@ -691,11 +931,11 @@ fn render(m: &mut Mgr, idx: usize) {
         }
     }
 
-    if m.pills[idx].drawn == Some((count, style, anchor)) {
+    if m.pills[idx].drawn == Some((count, style, anchor, active)) {
         return;
     }
-    if draw_pill(hwnd, count, style, anchor) {
-        m.pills[idx].drawn = Some((count, style, anchor));
+    if draw_pill(hwnd, count, style, anchor, active) {
+        m.pills[idx].drawn = Some((count, style, anchor, active));
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
@@ -726,6 +966,150 @@ fn create_pill_window(owner: HWND) -> Option<HWND> {
         .ok()?;
         SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner.0 as isize);
         Some(hwnd)
+    }
+}
+
+/// Click-through layered popup for the dots snapshot (E3), owned by the same
+/// Explorer window as the pill. `WS_EX_TRANSPARENT` is the difference from the
+/// pill: a click where a dot sits must fall through to the file underneath, not
+/// be eaten by the overlay.
+fn create_dots_window(owner: HWND) -> Option<HWND> {
+    unsafe {
+        let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).ok()?;
+        let hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            PILL_CLASS,
+            w!("Tofu Nuggets dots"),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .ok()?;
+        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner.0 as isize);
+        Some(hwnd)
+    }
+}
+
+/// Composite a dot over each annotated item rect into a bitmap the size of the
+/// content area, and push it. Item rects are screen coords; the overlay sits at
+/// the content-area origin, so everything is clipped to it (a dot on a partly
+/// scrolled item is cut at the edge). Returns whether the push succeeded.
+fn draw_dots(hwnd: HWND, owner: HWND, anchor: RECT, rects: &[RECT], st: Style) -> bool {
+    let w = anchor.right - anchor.left;
+    let h = anchor.bottom - anchor.top;
+    if w <= 0 || h <= 0 {
+        return false;
+    }
+
+    // Keep it glued directly above its owner (same reason as the pill: an owned
+    // popup drawn while its owner is foreground stacks behind it otherwise).
+    unsafe {
+        let above_owner = GetWindow(owner, GW_HWNDPREV).unwrap_or(HWND_TOP);
+        if above_owner != hwnd {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(above_owner),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    unsafe {
+        let screen_dc = GetDC(None);
+        let mem_dc = CreateCompatibleDC(Some(screen_dc));
+        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+        let Some(bmp) = dib(mem_dc, w, h, &mut bits) else {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, screen_dc);
+            return false;
+        };
+        let old = SelectObject(mem_dc, bmp.into());
+        let px = std::slice::from_raw_parts_mut(bits as *mut u32, (w * h) as usize);
+        px.fill(0);
+
+        // Match the desktop badge: same warm accent + white rim, at the item's
+        // top-right corner nudged inward, scaled by the same accessibility knobs
+        // as the pill so the two surfaces read as one product.
+        let r = st.px(6.0);
+        let nudge = st.px(4.0);
+        for it in rects {
+            let cx = it.right - anchor.left - r - nudge;
+            let cy = it.top - anchor.top + r + nudge;
+            draw_dot(px, w, h, cx, cy, r);
+        }
+
+        let ok = UpdateLayeredWindow(
+            hwnd,
+            Some(screen_dc),
+            Some(&POINT {
+                x: anchor.left,
+                y: anchor.top,
+            }),
+            Some(&SIZE { cx: w, cy: h }),
+            Some(mem_dc),
+            Some(&POINT { x: 0, y: 0 }),
+            COLORREF(0),
+            Some(&BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+                ..Default::default()
+            }),
+            ULW_ALPHA,
+        )
+        .is_ok();
+
+        SelectObject(mem_dc, old);
+        let _ = DeleteObject(bmp.into());
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(None, screen_dc);
+        if ok {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        ok
+    }
+}
+
+/// Anti-aliased accent dot with a white rim, premultiplied BGRA — the desktop
+/// badge dot (`badges::draw_dot`), radius-parameterized for accessibility scale.
+fn draw_dot(px: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, rad_px: i32) {
+    // Warm accent at ~0.9 alpha, matching the badge layer.
+    let (r8, g8, b8, a8) = (0xF5u32, 0x8Fu32, 0x3Cu32, 0xE6u32);
+    let rad = rad_px as f32;
+    let ring = (rad_px as f32 * 0.25).max(1.0);
+    for dy in -rad_px - 1..=rad_px + 1 {
+        for dx in -rad_px - 1..=rad_px + 1 {
+            let x = cx + dx;
+            let y = cy + dy;
+            if x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let dist = ((dx * dx + dy * dy) as f32).sqrt();
+            let coverage = (rad + 0.5 - dist).clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+            let a = (a8 as f32 * coverage) as u32;
+            let (r, g, b) = if dist > rad - ring {
+                (0xFFu32, 0xFFu32, 0xFFu32)
+            } else {
+                (r8, g8, b8)
+            };
+            let pr = r * a / 255;
+            let pg = g * a / 255;
+            let pb = b * a / 255;
+            px[(y * w + x) as usize] = (a << 24) | (pr << 16) | (pg << 8) | pb;
+        }
     }
 }
 
@@ -869,7 +1253,7 @@ fn system_high_contrast() -> bool {
 
 /// Composite the pill and push it with `UpdateLayeredWindow`, which sets the
 /// window's position and size in the same call. Returns whether it succeeded.
-fn draw_pill(hwnd: HWND, count: usize, st: Style, anchor: RECT) -> bool {
+fn draw_pill(hwnd: HWND, count: usize, st: Style, anchor: RECT, active: bool) -> bool {
     let text: Vec<u16> = count
         .to_string()
         .encode_utf16()
@@ -961,7 +1345,7 @@ fn draw_pill(hwnd: HWND, count: usize, st: Style, anchor: RECT) -> bool {
 
         let old_bmp = SelectObject(mem_dc, bmp.into());
         let px = std::slice::from_raw_parts_mut(bits as *mut u32, (w * h) as usize);
-        compose(px, &mask, w, h, dot_r, pad, st);
+        compose(px, &mask, w, h, dot_r, pad, st, active);
 
         let ok = UpdateLayeredWindow(
             hwnd,
@@ -1010,8 +1394,23 @@ fn dib(dc: HDC, w: i32, h: i32, bits: &mut *mut core::ffi::c_void) -> Option<HBI
 /// Rounded rect + 1 px border + accent dot + the digits, all composited by
 /// hand into premultiplied BGRA. Coverage comes from a signed distance to the
 /// rounded rect, which gives the same 1 px anti-aliased rim the badge dots use.
-fn compose(px: &mut [u32], mask: &[u8], w: i32, h: i32, dot_r: i32, pad: i32, st: Style) {
-    let (fill, border, text, accent) = st.colors();
+#[allow(clippy::too_many_arguments)]
+fn compose(
+    px: &mut [u32],
+    mask: &[u8],
+    w: i32,
+    h: i32,
+    dot_r: i32,
+    pad: i32,
+    st: Style,
+    active: bool,
+) {
+    let (fill, mut border, text, accent) = st.colors();
+    // Active (dots showing): trade the faint hairline for a full-strength accent
+    // border, so the pill reads as pressed. High contrast keeps its own colors.
+    if active && !st.high_contrast {
+        border = accent;
+    }
     let radius = h as f32 / 2.0;
     let (hw, hh) = (w as f32 / 2.0, h as f32 / 2.0);
     let bw = st.px(1.0) as f32;
@@ -1090,7 +1489,7 @@ mod tests {
         let (w, h) = (60, 24);
         let mut px = vec![0u32; (w * h) as usize];
         let mask = vec![0u8; (w * h) as usize];
-        compose(&mut px, &mask, w, h, 4, 9, st);
+        compose(&mut px, &mask, w, h, 4, 9, st, false);
 
         let alpha = |x: i32, y: i32| (px[(y * w + x) as usize] >> 24) & 0xFF;
         assert_eq!(alpha(0, 0), 0, "corner must be cut away");
@@ -1112,6 +1511,22 @@ mod tests {
         let (fill, _, text, _) = st.colors();
         assert_eq!(fill[3], 0xFF);
         assert_eq!(text[3], 0xFF);
+    }
+
+    /// The dots overlay's dot is opaque at its center, transparent well away
+    /// from it, and clips silently at the bitmap edge (items partly scrolled
+    /// out of the content area must not panic on out-of-range pixels).
+    #[test]
+    fn dot_is_drawn_centered_and_clips_at_edges() {
+        let (w, h) = (40, 40);
+        let mut px = vec![0u32; (w * h) as usize];
+        draw_dot(&mut px, w, h, 20, 20, 6);
+        let alpha = |x: i32, y: i32| (px[(y * w + x) as usize] >> 24) & 0xFF;
+        assert!(alpha(20, 20) > 128, "center of the dot is opaque");
+        assert_eq!(alpha(0, 0), 0, "far corner untouched");
+        // A dot centered on the edge must clip, not index out of bounds.
+        draw_dot(&mut px, w, h, 0, 0, 6);
+        draw_dot(&mut px, w, h, w - 1, h - 1, 6);
     }
 
     /// Every accessibility knob has to reach the geometry, or the pill would
