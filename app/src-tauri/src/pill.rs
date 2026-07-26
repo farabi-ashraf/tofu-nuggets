@@ -9,7 +9,8 @@
 //! reason the design is a pill and not a tracked overlay — so they are dismissed
 //! on the first change to the view rather than followed: scroll, window focus
 //! loss, move/resize, and folder/tab change all tear them down (`DOTS_DISMISS`,
-//! fed by the WinEvent hooks). Do not "improve" this into something that
+//! fed by the WinEvent hooks — and a `WH_MOUSE_LL` hook for wheel scroll, which
+//! a DirectUIHWND list reports no window event for). Do not "improve" this into something that
 //! repositions dots on scroll; the snapshot model is deliberate. The dots
 //! window is `WS_EX_TRANSPARENT`, so a click where a dot sits still reaches the
 //! file underneath, and the snapshot rects come from
@@ -136,6 +137,13 @@ static DOTS_ACTIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 /// of them on any qualifying change is simpler than per-window bookkeeping and
 /// passes every dismissal rule.
 static DOTS_DISMISS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Low-level mouse hook handle, live only while dots are shown. Modern Explorer
+/// content is a DirectUIHWND: its list items are not real child windows, so
+/// wheel scrolling fires no `EVENT_OBJECT_LOCATIONCHANGE` for the move hook to
+/// catch. A `WH_MOUSE_LL` hook sees the wheel directly. Installed on the pill
+/// thread when the first dots go up and removed when the last come down, so it
+/// costs nothing while no dots are on screen.
+static WHEEL_HOOK: AtomicIsize = AtomicIsize::new(0);
 
 pub fn spawn(app: AppHandle, paused: Paused, settings: settings::Shared) {
     std::thread::Builder::new()
@@ -186,6 +194,7 @@ fn destroy_pill(p: &Pill) {
 fn refresh_dots_active(m: &Mgr) {
     let n = m.pills.iter().filter(|p| p.dots_on).count();
     DOTS_ACTIVE.store(n, Ordering::Release);
+    update_wheel_hook(n);
 }
 
 struct Mgr {
@@ -287,6 +296,19 @@ fn run(app: AppHandle, paused: Paused, settings: settings::Shared) -> Result<()>
                     0,
                     flags,
                 );
+                // Scrollbar-drag / keyboard scroll: the frame enters scrolling
+                // mode. (Wheel scroll is caught separately by WH_MOUSE_LL — a
+                // DirectUIHWND list fires no per-item window events.) Only used
+                // to dismiss the dots snapshot, so it is gated on dots existing.
+                let _scroll: HWINEVENTHOOK = SetWinEventHook(
+                    EVENT_SYSTEM_SCROLLINGSTART,
+                    EVENT_SYSTEM_SCROLLINGSTART,
+                    None,
+                    Some(scroll_event),
+                    0,
+                    0,
+                    flags,
+                );
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     let _ = TranslateMessage(&msg);
@@ -378,6 +400,62 @@ unsafe extern "system" fn nav_event(
         }
         FORCE_FULL.store(true, Ordering::Release);
         arm_full();
+    }
+}
+
+/// The frame entered scrolling mode (scrollbar drag / keyboard). Invalidates the
+/// dots snapshot; gated on dots existing and scoped to Explorer frames.
+unsafe extern "system" fn scroll_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    _idobject: i32,
+    _idchild: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if hwnd.is_invalid() || DOTS_ACTIVE.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    if class_name(unsafe { GetAncestor(hwnd, GA_ROOT) }) == "CabinetWClass" {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
+    }
+}
+
+/// Low-level mouse hook: wheel scrolling a DirectUIHWND list dismisses the dots
+/// snapshot (that scroll fires no window event otherwise). Live only while dots
+/// are shown (`update_wheel_hook`).
+unsafe extern "system" fn wheel_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code >= 0
+        && (wparam.0 as u32 == WM_MOUSEWHEEL || wparam.0 as u32 == WM_MOUSEHWHEEL)
+        && DOTS_ACTIVE.load(Ordering::Acquire) > 0
+    {
+        DOTS_DISMISS.store(true, Ordering::Release);
+        arm_full();
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Install or remove the wheel hook to match whether any dots are shown. Called
+/// on the pill thread (the one that pumps the messages the hook is dispatched
+/// on) whenever `DOTS_ACTIVE` changes.
+fn update_wheel_hook(active: usize) {
+    let installed = WHEEL_HOOK.load(Ordering::Acquire);
+    unsafe {
+        if active > 0 && installed == 0 {
+            let hinstance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).ok();
+            if let Some(h) = hinstance {
+                if let Ok(hook) =
+                    SetWindowsHookExW(WH_MOUSE_LL, Some(wheel_proc), Some(h.into()), 0)
+                {
+                    WHEEL_HOOK.store(hook.0 as isize, Ordering::Release);
+                }
+            }
+        } else if active == 0 && installed != 0 {
+            let _ = UnhookWindowsHookEx(HHOOK(installed as *mut core::ffi::c_void));
+            WHEEL_HOOK.store(0, Ordering::Release);
+        }
     }
 }
 
@@ -673,6 +751,7 @@ fn destroy_all(m: &mut Mgr) {
         destroy_pill(&p);
     }
     DOTS_ACTIVE.store(0, Ordering::Release);
+    update_wheel_hook(0);
 }
 
 /// Toggle one window's dots snapshot. On → take a fresh UIA snapshot and draw a
@@ -750,6 +829,7 @@ fn dismiss_all_dots(m: &mut Mgr) {
         }
     }
     DOTS_ACTIVE.store(0, Ordering::Release);
+    update_wheel_hook(0);
     for idx in touched {
         render(m, idx);
     }
