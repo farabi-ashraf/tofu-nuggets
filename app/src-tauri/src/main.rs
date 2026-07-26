@@ -14,6 +14,8 @@ mod hotkey;
 mod hover;
 mod icons;
 mod index;
+#[cfg(target_os = "macos")]
+mod lifecycle_mac;
 mod links;
 mod logfile;
 mod mainwin;
@@ -111,17 +113,17 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // macOS kills the app once it has no visible window, on a path that
+            // skips ExitRequested — override the NSApp delegate so it says no.
+            // This is the real keep-alive; panels can now just hide() (below).
+            #[cfg(target_os = "macos")]
+            lifecycle_mac::install(app.handle());
+
             // Warm overlay at startup; the hover engine destroys it after
             // idle and recreates it on demand. Failure here is the
             // WebView2-missing signature ("tray alive, all windows dead") —
             // tell the user with a native dialog instead of dying silently.
             match overlay::create(app.handle()) {
-                // macOS keeps the panel parked off-screen rather than hidden,
-                // because an app with no visible window is terminated (see
-                // overlay::park).
-                #[cfg(target_os = "macos")]
-                Ok(win) => overlay::park(&win),
-                #[cfg(not(target_os = "macos"))]
                 Ok(_) => {}
                 Err(e) => {
                     logfile::log(
@@ -223,12 +225,10 @@ fn main() {
                         let _ = win.hide();
                     }
                     // Visible-window census: macOS kills the app when it sees
-                    // no visible window, and a tester run died right after an
-                    // editor hide even though the parked panel AND the badge
-                    // window should both have been visible. This line shows
-                    // what each window reported at exactly that moment — the
-                    // discriminator between "our windows aren't actually
-                    // visible" and "AppKit doesn't count them".
+                    // no visible window. The delegate override (lifecycle_mac)
+                    // is what now prevents that, but this line stays as the
+                    // discriminator if the exit bug ever returns — it shows what
+                    // every window reported at the moment a window closed.
                     let census = app
                         .webview_windows()
                         .iter()

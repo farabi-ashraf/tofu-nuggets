@@ -43,6 +43,7 @@
 | `pill.rs` | **Windows** Explorer pill + dots: one owned GDI layered chip per Explorer window (count mode), hand-composited; per-window create/track/destroy, `LOCATIONCHANGE` reposition, foreground-gated polling, accessibility styling. Click toggles a click-through dots overlay from a one-shot UIA snapshot, dismissed on any view change (E3) | `spawn`, `notes_changed`, `wake` |
 | `roots.rs` | Known-roots list: records the parent folder of each saved note, loaded by the startup index rebuild | `load`, `record` |
 | `badges_mac.rs` | **macOS** badge layer: click-through always-on-top webview window over all displays; per-dot occlusion from the CG window list; 2 s poll (no WinEvent equivalent); dots pushed via `badges:update` | `spawn` |
+| `lifecycle_mac.rs` | **macOS** process-survival fix: adds `applicationShouldTerminateAfterLastWindowClosed:` → NO to Tauri's NSApp delegate at setup, so hidden windows no longer end the app | `install` |
 | `storage.rs` | Sidecar read/write/delete/rename, redirect logic, HTML preview/empty checks, bulk purge, per-folder note count (the pill's number) | `write_nugget`, `read_nugget`, `delete_nugget`, `rename_sidecar`, `purge_sidecar_dir`, `count_notes_in_folder` |
 | `index.rs` | SQLite cache: rebuild scan, upsert/remove/rename, list, clear | `NuggetIndex`, `scan_root` |
 | `watcher.rs` | FS watcher keeping sidecars+index in step with renames/deletes on watched roots | `spawn`, `handle_event` |
@@ -95,11 +96,15 @@
 - **macOS ends the process whenever no window is VISIBLE** — hidden ones do not
   count, and the termination skips `ExitRequested`, so `prevent_exit` never sees it
   (proved by tofu.log: `exiting` with no `exit requested`, including ~6 s after a
-  launch where no window was ever opened). Two consequences, both macOS-only:
-  windows hide instead of closing (`main.rs` run handler, also the platform
-  convention), and the panel is **parked off-screen instead of hidden**
-  (`overlay::park`) so AppKit always has one visible window. Never call `hide()` on
-  the panel there.
+  launch where no window was ever opened). The fix is the delegate override
+  `applicationShouldTerminateAfterLastWindowClosed:` → NO (`lifecycle_mac::install`,
+  added to Tauri's own NSApp delegate at setup). With that in place the panel
+  **just hides like everywhere else** — the earlier off-screen "parking" of the
+  panel is gone (it was a workaround, and the parked window reappeared mid-screen
+  after display sleep when AppKit constrained it back on-screen). Windows still
+  hide instead of closing on macOS (`main.rs` run handler, the platform
+  convention); `CloseRequested` still logs a visible-window census as the
+  discriminator if the exit bug ever returns.
 - **Idle release is Windows-only**: it reclaims WebView2's process tree; WKWebView has
   no equivalent cost and per-hover AppKit window recreation is a needless risk.
 - **Activation policy**: macOS runs as `Accessory` (menu-bar agent, no Dock icon).
