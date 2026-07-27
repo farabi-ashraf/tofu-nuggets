@@ -71,6 +71,19 @@ pub fn save_nugget(
     if let Ok(idx) = index.lock() {
         idx.upsert_item(&item);
     }
+    // macOS badge = a Finder tag on the file (D3). Skip while badges are off;
+    // re-enabling re-tags everything (settings.rs).
+    #[cfg(target_os = "macos")]
+    {
+        let on = app
+            .state::<crate::settings::Shared>()
+            .lock()
+            .map(|s| s.badges)
+            .unwrap_or(true);
+        if on {
+            crate::tags::set_note_tag(&app, &item);
+        }
+    }
     // Let an open main window refresh its list.
     let _ = app.emit("nuggets:changed", ());
     #[cfg(windows)]
@@ -97,6 +110,9 @@ fn remove_nugget(
     if let Ok(idx) = index.lock() {
         idx.remove_item(item);
     }
+    // Deleting a note always removes its Finder tag, badges on or off (D3).
+    #[cfg(target_os = "macos")]
+    crate::tags::clear_note_tag(app, item);
     let _ = app.emit("nuggets:changed", ());
     #[cfg(windows)]
     crate::pill::notes_changed();

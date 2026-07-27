@@ -41,9 +41,14 @@ glassy panel appears beside it with your note rendered read-only; checkboxes are
 live, links clickable. Move away and it hides. ✕ closes it immediately, ✎ jumps to
 the editor.
 
-**Badges** — a small dot marks every desktop icon that carries a nugget, so you know
-what has notes without hovering. Dots hide under any window that overlaps them and
-can be turned off in Settings.
+**Badges** — a small dot marks every icon that carries a nugget, so you know what has
+notes without hovering. On **Windows** the dots are drawn by the app on the desktop
+and hide under any window that overlaps them. On **macOS** the badge is a Finder tag
+named "Nugget" that the app adds to the file, so **Finder** draws the dot for you —
+on the desktop *and* inside every Finder window, automatically. Either way, badges
+can be turned off in Settings; on macOS that removes the "Nugget" tag from your
+files (and re-adds it when you switch badges back on). The tag is visible in Get
+Info, and because tags sync via iCloud/Dropbox your badges travel between your Macs.
 
 **Explorer count pill** *(Windows)* — every File Explorer window shows a small glassy
 chip in the bottom-right of its file list with the number of items in that folder

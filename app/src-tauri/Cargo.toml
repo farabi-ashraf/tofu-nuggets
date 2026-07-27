@@ -21,6 +21,10 @@ tauri-plugin-dialog = "2.7.1"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-updater = "2"
+# Binary-plist codec for the macOS Finder-tag xattr. Pure Rust, so it also
+# builds on Windows where it lets the tag-array transforms be unit-tested; it is
+# only *used* at runtime on macOS.
+plist = "1"
 
 # Windows-only: Win32/UIA interop + the WebView2 transparency fix. The
 # aliased windows-core 0.61 must match tauri's webview2-com — load-bearing,
@@ -48,8 +52,11 @@ windows = { version = "0.62", features = [
 # macOS-only: raw Objective-C runtime access to extend the NSApp delegate
 # (see lifecycle_mac.rs). Only the `objc2` core is needed — the one selector we
 # add is reached through `class!`/`msg_send!`/`ffi`, no AppKit bindings required.
+# xattr + libc: read/write the Finder-tag xattr (tags.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
+xattr = "1"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.27.0"

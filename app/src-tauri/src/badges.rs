@@ -19,9 +19,9 @@
 //! All dot coordinates are relative to that inset rect's origin, not to the
 //! raw virtual screen.
 //!
-//! Windows-only module (cfg-gated in main.rs; the macOS layer is
-//! `badges_mac.rs` — a click-through webview window, since none of the GDI /
-//! WinEvent machinery here ports).
+//! Windows-only module (cfg-gated in main.rs). macOS has no equivalent: its
+//! badge is a Finder tag (`tags.rs`) that Finder draws itself, so none of this
+//! GDI / WinEvent machinery is ported there.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 

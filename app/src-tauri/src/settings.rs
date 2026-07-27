@@ -86,10 +86,10 @@ pub fn set_settings(
     let next = settings.normalized();
     // A changed hotkey must actually register before it is persisted; on
     // failure the old binding stays live and the caller gets the error.
-    let old_hotkey = state
+    let (old_hotkey, _old_badges) = state
         .lock()
-        .map(|g| g.hotkey.clone())
-        .unwrap_or_else(|_| "ctrl+shift+n".into());
+        .map(|g| (g.hotkey.clone(), g.badges))
+        .unwrap_or_else(|_| ("ctrl+shift+n".into(), true));
     if next.hotkey != old_hotkey {
         crate::hotkey::reregister(&app, &old_hotkey, &next.hotkey)?;
         crate::logfile::log(&app, &format!("hotkey changed to '{}'", next.hotkey));
@@ -98,6 +98,32 @@ pub fn set_settings(
         *g = next.clone();
     }
     write(&app, &next);
+
+    // macOS badges are Finder tags: turning badges off strips our tag from every
+    // annotated file, turning them back on re-tags them (D3). Windows draws its
+    // dots live from this flag, so it needs no such sweep. Off the main thread —
+    // one xattr syscall per note.
+    #[cfg(target_os = "macos")]
+    if next.badges != _old_badges {
+        let app2 = app.clone();
+        let want_tagged = next.badges;
+        let index = app
+            .state::<Arc<Mutex<crate::index::NuggetIndex>>>()
+            .inner()
+            .clone();
+        std::thread::spawn(move || {
+            let paths: Vec<std::path::PathBuf> = index
+                .lock()
+                .ok()
+                .and_then(|i| i.all().ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| std::path::PathBuf::from(e.path))
+                .collect();
+            crate::tags::resync(&app2, paths, want_tagged);
+        });
+    }
+
     // Every window re-applies live (theme.js listener).
     let _ = app.emit("settings:changed", next);
     Ok(())
