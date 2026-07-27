@@ -2,14 +2,14 @@
 
 > Hover a desktop icon → see your own notes about it.
 
-Tofu Nuggets is a lightweight desktop overlay for Windows. Hover over any file or
-folder icon on your desktop — or inside a File Explorer window — and a glassy panel
-appears showing context you wrote yourself — a "nugget." Notes are rich text (todos,
-links, formatting), created with a global hotkey, and stored as plain sidecar files
-next to the item they describe.
+Tofu Nuggets is a lightweight desktop overlay for Windows and macOS. Hover over any
+file or folder icon on your desktop — or inside a **File Explorer** window (Windows)
+or a **Finder** window (macOS) — and a glassy panel appears showing context you wrote
+yourself — a "nugget." Notes are rich text (todos, links, formatting), created with a
+global hotkey, and stored as plain sidecar files next to the item they describe.
 
 It runs quietly in the background: near-zero CPU when idle, hover polling only while
-the desktop or a File Explorer window is in the foreground.
+the desktop or a file-manager window (File Explorer / Finder) is in the foreground.
 
 ## Status
 
@@ -36,10 +36,12 @@ editor** — each drop inserts a link named after the item. Clicking such a link
 the hover panel opens Explorer at the target; in the editor, `Ctrl+Click` follows
 links.
 
-**Hover panel** — rest the cursor on an annotated desktop icon for a moment and the
-glassy panel appears beside it with your note rendered read-only; checkboxes are
-live, links clickable. Move away and it hides. ✕ closes it immediately, ✎ jumps to
-the editor.
+**Hover panel** — rest the cursor on an annotated item for a moment and the glassy
+panel appears beside it with your note rendered read-only; checkboxes are live, links
+clickable. Move away and it hides. ✕ closes it immediately, ✎ jumps to the editor.
+Works on the desktop and inside file-manager windows — **File Explorer** on Windows,
+**Finder** browser windows on macOS (list, column, gallery and icon views), including
+the active tab of a multi-tab window.
 
 **Badges** — a small dot marks every icon that carries a nugget, so you know what has
 notes without hovering. On **Windows** the dots are drawn by the app on the desktop
@@ -80,15 +82,18 @@ rebuildable cache, and uninstalling never deletes your notes.
 
 ## How it works
 
-Hover detection uses Windows **UI Automation** (`ElementFromPoint`) — no cross-process
-memory reads of Explorer's ListView. The overlay panel is a transparent, never-focused
-window; the glass look is CSS. Note content always lives in the sidecar files; the
-index can be deleted and rebuilt from them at any time.
+Hover detection uses **UI Automation** (`ElementFromPoint`) on Windows and the
+**Accessibility API** (`AXUIElementCopyElementAtPosition`) on macOS — a hit-test under
+the cursor, no cross-process memory reads. On both platforms the hit-test is gated to
+the foreground surface (desktop or a file-manager window), so it does no work while
+another app is in front. The overlay panel is a transparent, never-focused window; the
+glass look is CSS. Note content always lives in the sidecar files; the index can be
+deleted and rebuilt from them at any time.
 
 ## Tech stack
 
 - **Backend:** Rust + [Tauri 2](https://tauri.app/); the `windows` crate for Win32 /
-  UI Automation behind a platform trait (`DesktopIcons`).
+  UI Automation and the macOS Accessibility API behind a platform trait (`DesktopIcons`).
 - **Frontend:** webview UI with [TipTap](https://tiptap.dev/) for the rich-text editor.
 - **Storage:** sidecar JSON files (source of truth) + a SQLite cache index.
 

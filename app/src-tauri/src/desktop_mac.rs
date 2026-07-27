@@ -2,10 +2,35 @@
 //!
 //! Mirror of the Windows UIA approach: a system-wide AX hit-test
 //! (`AXUIElementCopyElementAtPosition`, the `ElementFromPoint` analogue)
-//! identifies the element under the cursor. A hit counts as a desktop icon
-//! when its ancestor chain contains Finder's `AXScrollArea` icon container and
-//! any window it reports spans a display. Display names resolve to paths
-//! against `~/Desktop`.
+//! identifies the element under the cursor, on the Finder desktop **and inside
+//! Finder browser windows** (M5, mirroring the Windows Explorer work in
+//! `desktop.rs`). Display/item names resolve to paths (`icons::resolve_path`)
+//! against the desktop roots or, in a Finder window, that window's folder.
+//!
+//! Perf gate (mirrors Windows `foreground_surface`): before any AX hit-test,
+//! `finder_frontmost` checks whether Finder is the focused application
+//! (`AXFocusedApplication`). When it is not — any other app is frontmost — the
+//! hit-test never runs, so the engine stays idle (budget: ~0% CPU when neither
+//! the desktop nor a Finder window is foreground, docs/ARCHITECTURE.md). This
+//! matches Windows, where the desktop hit-test only runs while `Progman`/a
+//! `CabinetWClass` window is foreground: "desktop foreground" on macOS means
+//! Finder is frontmost with the desktop as the active surface.
+//!
+//! Desktop-vs-window routing is by AX *shape*, not window size. The Finder
+//! desktop has no `AXWindow` (see below); a Finder browser window is an
+//! `AXWindow`. So a hit whose ancestor chain contains an `AXWindow` is resolved
+//! against that window's folder, and one without is the desktop. This replaces
+//! the earlier display-size heuristic (`covers_a_display` on the hit chain),
+//! which mis-classified a *maximized* icon-view Finder window as the desktop and
+//! fired the panel over the empty space between its icons (M5 fix). Sizing is
+//! still used only to locate the desktop's own container for enumeration.
+//!
+//! Finder window folder comes from the window's `AXDocument` — a `file://` URL
+//! Finder keeps pointed at the **active tab's** folder. Finder renders only the
+//! active tab (inactive tabs are not in the AX tree), so a multi-tab window
+//! resolves the front tab directly, with no cursor-in-view disambiguation of the
+//! kind Explorer needs (there each tab is a live HWND). That is the one place
+//! macOS AX is simpler than the Win32 shell chain.
 //!
 //! The element shapes here are NOT contractual — Finder exposes desktop items
 //! differently across releases, and the first attempt (exact roles, exact
@@ -145,6 +170,7 @@ mod ffi {
         pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
         pub fn AXUIElementCreateSystemWide() -> AXUIElementRef;
         pub fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+        pub fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
         pub fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> CFTypeRef;
         pub fn AXUIElementCopyElementAtPosition(
             application: AXUIElementRef,
@@ -368,16 +394,26 @@ fn selection_in(elem: CFTypeRef, dirs: &[PathBuf]) -> Option<Icon> {
         .find_map(|kid| icon_from(kid.0, dirs))
 }
 
-/// Is this the desktop itself rather than an item on it?
+/// Is this a container (desktop/window chrome) rather than an item?
 ///
-/// The container answers `AXTitle` too — "Desktop" — and pointing at bare
-/// wallpaper hits it, which produced a phantom icon by that name and, worse,
-/// counted as a hit so the hotkey never fell back to the selection. Icons are
-/// never display-sized, so geometry settles it without guessing at roles.
+/// On the desktop the container answers `AXTitle` too — "Desktop" — and pointing
+/// at bare wallpaper hits it, which produced a phantom icon by that name and,
+/// worse, counted as a hit so the hotkey never fell back to the selection.
+/// Inside a Finder window the item-holding views (`AXList`/`AXTable`/`AXOutline`
+/// in list & details, `AXBrowser` in column view) play the same role: a hit on
+/// the empty space between items lands on one of them, and rejecting them is
+/// what keeps the panel from firing there (M5). Desktop icons are also never
+/// display-sized, so geometry rejects the desktop scroll area/group as well.
 fn is_container(elem: CFTypeRef) -> bool {
     matches!(
         string_attr(elem, "AXRole").as_deref(),
-        Some("AXScrollArea") | Some("AXWindow") | Some("AXApplication")
+        Some("AXScrollArea")
+            | Some("AXWindow")
+            | Some("AXApplication")
+            | Some("AXList")
+            | Some("AXTable")
+            | Some("AXOutline")
+            | Some("AXBrowser")
     ) || covers_a_display(elem)
 }
 
@@ -441,22 +477,118 @@ fn covers_a_display(win: CFTypeRef) -> bool {
         .any(|b| area >= 0.8 * (b.size.width * b.size.height))
 }
 
-/// Is this hit inside the desktop's icon container? Requires an `AXScrollArea`
-/// ancestor (Finder's icon container) and, when the chain exposes a window at
-/// all, one that spans a display. The desktop window is special and does not
-/// always answer `AXWindow`, so a missing window is accepted rather than
-/// treated as a rejection.
+/// Is this hit on the desktop's icon container? Only reached once routing has
+/// ruled out a Finder browser window (no `AXWindow` in the chain), so it just
+/// confirms the hit is inside Finder's icon `AXScrollArea` — not, say, the menu
+/// bar or a Spotlight overlay that also lives window-less under the app. The
+/// desktop's `AXScrollArea` is the same container `desktop_icon_container` finds
+/// for enumeration.
 fn chain_is_desktop(chain: &[CfOwned]) -> bool {
-    let has_scroll_area = chain
+    chain
         .iter()
-        .any(|e| string_attr(e.0, "AXRole").as_deref() == Some("AXScrollArea"));
-    if !has_scroll_area {
-        return false;
+        .any(|e| string_attr(e.0, "AXRole").as_deref() == Some("AXScrollArea"))
+}
+
+/// The nearest `AXWindow` at or above the hit element, marking a hit inside a
+/// Finder *browser* window. The desktop has no `AXWindow` (module header), so
+/// its absence routes the hit to the desktop instead. Routing by role — not by
+/// size — is what stops a maximized icon-view window reading as the desktop.
+fn window_in_chain(elem: &CfOwned, chain: &[CfOwned]) -> Option<CfOwned> {
+    std::iter::once(elem)
+        .chain(chain.iter())
+        .find(|e| string_attr(e.0, "AXRole").as_deref() == Some("AXWindow"))
+        .and_then(|w| retained(w.0))
+}
+
+/// Current folder of a Finder browser window, from its `AXDocument` (a `file://`
+/// URL Finder keeps pointed at the active tab's folder). `None` for a window
+/// that shows no filesystem folder (Recents, Tags, AirDrop) or has no document.
+fn finder_window_folder(win: CFTypeRef) -> Option<PathBuf> {
+    file_url_to_path(&string_attr(win, "AXDocument")?)
+}
+
+/// A `file://` URL → path, percent-decoding escapes Finder puts in `AXDocument`
+/// (spaces become `%20`, and so on). Local file URLs have an empty host —
+/// `file:///Users/x` — with an optional `localhost`.
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    let decoded = percent_decode(rest);
+    (!decoded.is_empty()).then(|| PathBuf::from(decoded))
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
     }
-    match chain.iter().find_map(|e| copy_attr(e.0, "AXWindow")) {
-        Some(win) => covers_a_display(win.0),
-        None => true,
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
+}
+
+/// Pid of the focused application (the frontmost app), for the perf gate.
+fn frontmost_pid(system_wide: CFTypeRef) -> Option<i32> {
+    let app = copy_attr(system_wide, "AXFocusedApplication")?;
+    let mut pid: i32 = 0;
+    let err = unsafe { AXUIElementGetPid(app.0, &mut pid) };
+    (err == kAXErrorSuccess && pid > 0).then_some(pid)
+}
+
+/// The nearest named, non-container element at or above the hit — the item the
+/// cursor is on — resolved against `dirs`. The element actually hit may be the
+/// icon image, its text label, or the row wrapping both, and only some carry the
+/// name, so take the closest one with both a name and a frame. Container levels
+/// (the scroll area / window / table itself) are excluded so bare background
+/// between items resolves to nothing instead of the container's own title.
+fn item_from_hit(elem: &CfOwned, chain: &[CfOwned], dirs: &[PathBuf]) -> Option<Icon> {
+    let (name, f) = std::iter::once(elem)
+        .chain(chain.iter().take(2))
+        .filter(|e| !is_container(e.0))
+        .find_map(|e| Some((element_name(e.0)?, frame_pts(e.0)?)))?;
+    Some(Icon {
+        rect: IconRect {
+            left: f.origin.x.round() as i32,
+            top: f.origin.y.round() as i32,
+            right: (f.origin.x + f.size.width).round() as i32,
+            bottom: (f.origin.y + f.size.height).round() as i32,
+        },
+        path: resolve_path(&name, dirs),
+        name,
+    })
+}
+
+/// First selected item inside a Finder browser window, resolved against its
+/// folder (hotkey selection fallback). Which element answers
+/// `AXSelectedChildren` varies by view — the scroll area, or the
+/// outline/table/browser inside it — so search a few levels down.
+fn window_selection(win: CFTypeRef, depth: usize, dirs: &[PathBuf]) -> Option<Icon> {
+    if let Some(icon) = selection_in(win, dirs) {
+        return Some(icon);
+    }
+    if depth == 0 {
+        return None;
+    }
+    children(win)
+        .into_iter()
+        .find_map(|k| window_selection(k.0, depth - 1, dirs))
 }
 
 /// Human-readable dump of what sits under the cursor, written to the log when
@@ -491,11 +623,28 @@ pub fn debug_cursor_chain() -> Option<String> {
             .unwrap_or_else(|| "no frame".into());
         format!("{role}/{sub} \"{name}\" [{f}]")
     };
+    // Perf gate + routing verdict: distinguishes "hotkey found nothing because
+    // Finder was not frontmost" from "found nothing under the cursor", and shows
+    // which surface (desktop vs which Finder window folder) the hit routed to.
+    let fpid = frontmost_pid(system_wide.0);
+    let finder = finder_pid();
+    let gate = matches!((fpid, finder), (Some(a), Some(b)) if a == b);
+    let chain = ancestor_chain(elem.0);
+    let route = match window_in_chain(&elem, &chain) {
+        Some(win) => match finder_window_folder(win.0) {
+            Some(folder) => format!("Finder window → folder {}", folder.display()),
+            None => "Finder window → no AXDocument folder (Recents/Tags/etc.?)".into(),
+        },
+        None if chain_is_desktop(&chain) => "desktop".into(),
+        None => "neither (no AXWindow, no desktop AXScrollArea)".into(),
+    };
     let mut out = format!(
-        "AX chain at ({xp:.0},{yp:.0}) pts:\n  0: {}",
+        "gate: frontmost pid={fpid:?} finder pid={finder:?} finder_frontmost={gate}\n\
+         route: {route}\n\
+         AX chain at ({xp:.0},{yp:.0}) pts:\n  0: {}",
         describe(elem.0)
     );
-    for (i, node) in ancestor_chain(elem.0).iter().enumerate() {
+    for (i, node) in chain.iter().enumerate() {
         out.push_str(&format!("\n  {}: {}", i + 1, describe(node.0)));
     }
     out.push_str(&format!("\n{}", debug_finder_tree()));
@@ -517,13 +666,24 @@ fn debug_finder_tree() -> String {
         let role = string_attr(win.0, "AXRole").unwrap_or_else(|| "?".into());
         let title = string_attr(win.0, "AXTitle").unwrap_or_else(|| "-".into());
         let spans = covers_a_display(win.0);
+        // AXDocument is where a Finder browser window's active-tab folder comes
+        // from; showing it (raw URL + resolved path) is how the tabs path is
+        // verified on hardware.
+        let doc = string_attr(win.0, "AXDocument")
+            .map(|u| {
+                let folder = finder_window_folder(win.0)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unresolved>".into());
+                format!("{u} → {folder}")
+            })
+            .unwrap_or_else(|| "-".into());
         let kids = children(win.0)
             .iter()
             .map(|k| string_attr(k.0, "AXRole").unwrap_or_else(|| "?".into()))
             .collect::<Vec<_>>()
             .join(",");
         out.push_str(&format!(
-            "\n  win {i}: {role} \"{title}\" spans-display={spans} children=[{kids}]"
+            "\n  win {i}: {role} \"{title}\" spans-display={spans} doc={doc} children=[{kids}]"
         ));
     }
     match desktop_icon_container() {
@@ -550,40 +710,72 @@ fn debug_finder_tree() -> String {
     out
 }
 
-impl DesktopIcons for MacIcons {
-    fn icon_at(&self, x: i32, y: i32) -> Option<Icon> {
-        let (xp, yp) = (x as f64, y as f64);
+impl MacIcons {
+    /// Perf gate: is Finder the frontmost application? Any other app frontmost
+    /// means neither the desktop nor a Finder window is the active surface, so
+    /// no hit-test runs (budget). Mirrors the Windows `foreground_surface`
+    /// class check.
+    fn finder_frontmost(&self) -> bool {
+        matches!(
+            (frontmost_pid(self.system_wide.0), finder_pid()),
+            (Some(a), Some(b)) if a == b
+        )
+    }
+
+    /// AX element under the cursor (points), or `None` when the hit-test fails
+    /// (permission missing, or nothing there).
+    fn hit(&self, x: i32, y: i32) -> Option<CfOwned> {
         let mut raw: AXUIElementRef = std::ptr::null();
         let err = unsafe {
-            AXUIElementCopyElementAtPosition(self.system_wide.0, xp as f32, yp as f32, &mut raw)
+            AXUIElementCopyElementAtPosition(self.system_wide.0, x as f32, y as f32, &mut raw)
         };
-        if err != kAXErrorSuccess {
+        (err == kAXErrorSuccess)
+            .then(|| CfOwned::new(raw))
+            .flatten()
+    }
+
+    /// The frontmost Finder browser window and its folder, if one is focused.
+    /// The desktop is not an `AXWindow`, so when the desktop is the active
+    /// surface Finder reports no focused window (or a non-`AXWindow`) and this
+    /// returns `None` — the caller then uses the desktop selection instead.
+    fn focused_finder_window(&self) -> Option<(CfOwned, PathBuf)> {
+        if !self.finder_frontmost() {
             return None;
         }
-        let elem = CfOwned::new(raw)?;
+        let app = CfOwned::new(unsafe { AXUIElementCreateApplication(finder_pid()?) })?;
+        let win = copy_attr(app.0, "AXFocusedWindow")?;
+        if string_attr(win.0, "AXRole").as_deref() != Some("AXWindow") {
+            return None;
+        }
+        let folder = finder_window_folder(win.0)?;
+        Some((win, folder))
+    }
+}
 
+impl DesktopIcons for MacIcons {
+    fn icon_at(&self, x: i32, y: i32) -> Option<Icon> {
+        // Perf gate: no AX hit-test unless Finder is the active surface.
+        if !self.finder_frontmost() {
+            return None;
+        }
+        let elem = self.hit(x, y)?;
         let chain = ancestor_chain(elem.0);
-        if !chain_is_desktop(&chain) {
-            return None;
-        }
 
-        // The element actually hit may be the icon image, its text label, or
-        // the item wrapping both, and only some of those carry the name — so
-        // take the nearest one that has both a name and a frame. Container
-        // levels are excluded: bare wallpaper hits the desktop itself, which
-        // answers to "Desktop" and would otherwise pass as an icon.
-        let (name, f) = std::iter::once(&elem)
-            .chain(chain.iter().take(2))
-            .filter(|e| !is_container(e.0))
-            .find_map(|e| Some((element_name(e.0)?, frame_pts(e.0)?)))?;
-        let rect = IconRect {
-            left: f.origin.x.round() as i32,
-            top: f.origin.y.round() as i32,
-            right: (f.origin.x + f.size.width).round() as i32,
-            bottom: (f.origin.y + f.size.height).round() as i32,
-        };
-        let path = resolve_path(&name, &self.dirs);
-        Some(Icon { name, rect, path })
+        // Route by shape: an AXWindow ancestor = a Finder browser window
+        // (resolve against its folder); none = the desktop (resolve against the
+        // desktop roots). See the module header for why this is not a size test.
+        match window_in_chain(&elem, &chain) {
+            Some(win) => {
+                let folder = finder_window_folder(win.0)?;
+                item_from_hit(&elem, &chain, std::slice::from_ref(&folder))
+            }
+            None => {
+                if !chain_is_desktop(&chain) {
+                    return None;
+                }
+                item_from_hit(&elem, &chain, &self.dirs)
+            }
+        }
     }
 
     fn list_icons(&self) -> Result<Vec<Icon>, String> {
@@ -595,6 +787,17 @@ impl DesktopIcons for MacIcons {
     }
 
     fn selected_icon(&self) -> Option<Icon> {
+        // A Finder browser window in front → its selection, resolved against its
+        // folder. Mirrors the Windows `selected_icon` Explorer branch.
+        if let Some((win, folder)) = self.focused_finder_window() {
+            if let Some(icon) =
+                window_selection(win.0, SEARCH_DEPTH + 1, std::slice::from_ref(&folder))
+            {
+                return Some(icon);
+            }
+        }
+        // Desktop selection fallback, kept regardless of foreground (as on
+        // Windows): the hotkey over empty desktop still targets the selection.
         let container = desktop_icon_container()?;
         if let Some(icon) = selection_in(container.0, &self.dirs) {
             return Some(icon);
@@ -697,3 +900,68 @@ pub fn suppress_desktop_infotips() -> bool {
 
 /// No per-thread runtime setup needed on macOS (COM is Windows-only).
 pub fn init_thread() {}
+
+#[cfg(test)]
+mod tests {
+    use super::{file_url_to_path, percent_decode};
+    use std::path::PathBuf;
+
+    #[test]
+    fn plain_file_url_becomes_path() {
+        assert_eq!(
+            file_url_to_path("file:///Users/x/Documents"),
+            Some(PathBuf::from("/Users/x/Documents"))
+        );
+    }
+
+    #[test]
+    fn trailing_slash_is_kept_but_harmless() {
+        // Finder's AXDocument on a folder ends in a slash; resolve_path reads the
+        // dir either way, so the exact trailing slash does not matter.
+        assert_eq!(
+            file_url_to_path("file:///Users/x/Documents/"),
+            Some(PathBuf::from("/Users/x/Documents/"))
+        );
+    }
+
+    #[test]
+    fn percent_escapes_are_decoded() {
+        // Spaces and other escapes Finder puts in the URL come back as bytes.
+        assert_eq!(
+            file_url_to_path("file:///Users/x/My%20Great%20Folder"),
+            Some(PathBuf::from("/Users/x/My Great Folder"))
+        );
+    }
+
+    #[test]
+    fn localhost_host_is_stripped() {
+        assert_eq!(
+            file_url_to_path("file://localhost/Users/x"),
+            Some(PathBuf::from("/Users/x"))
+        );
+    }
+
+    #[test]
+    fn non_file_scheme_is_rejected() {
+        assert_eq!(file_url_to_path("x-apple.finder:///Recents"), None);
+        assert_eq!(file_url_to_path(""), None);
+    }
+
+    #[test]
+    fn unicode_percent_bytes_round_trip() {
+        // "café" → the é is UTF-8 %C3%A9; decoding must reassemble the bytes.
+        assert_eq!(
+            file_url_to_path("file:///Users/x/caf%C3%A9"),
+            Some(PathBuf::from("/Users/x/café"))
+        );
+    }
+
+    #[test]
+    fn dangling_percent_is_left_literal() {
+        // A stray '%' with no two hex digits after it is passed through as-is
+        // rather than dropped or panicking.
+        assert_eq!(percent_decode("abc%"), "abc%");
+        assert_eq!(percent_decode("a%2"), "a%2");
+        assert_eq!(percent_decode("a%zz"), "a%zz");
+    }
+}
