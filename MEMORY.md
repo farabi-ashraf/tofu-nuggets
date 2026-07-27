@@ -20,8 +20,8 @@
 | Phase | What | State |
 |---|---|---|
 | W1, W2, E0–E3 | Taskbar fix, small UX debts, Explorer spike + hover/hotkey + pill + dots | **DONE**, PRs #31–#39, all owner-verified on this machine |
-| **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **Code complete (`lifecycle_mac.rs`), PR open, NOT Mini-verified** |
-| **M4a** | Finder-tag engine; delete `badges_mac.rs` + `badges.html` + `badges:update` | next |
+| **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **DONE — PR #40 merged, Mini-verified 2026-07-27** (survives new/edit-note-then-close, no stray after-sleep window, hover/Quit/updater fine). **Caveat**: the override is *installed but never yet consulted* — Mini log never showed the `-> false` line because the always-visible badge window means AppKit never sees zero visible windows (census `badges=true` at every close). See M4a. |
+| **M4a** | Finder-tag engine; delete `badges_mac.rs` + `badges.html` + `badges:update` | **next — this is the REAL test of M3**: once the always-visible badge window is gone, the delegate override becomes what keeps the app alive. Watch the Mini log for `applicationShouldTerminateAfterLastWindowClosed -> false` + census after a close; if the app dies, M3 needs revisiting (delegate fetched too early / not consulted) before M4a can stand. |
 | **M4b** | Shared `badge_color` setting (both OSes) + one-time first-tag notice | after M4a |
 | **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | last before release |
 | — | Version bump 0.4.0 → tag → CI draft → owner publishes | |
