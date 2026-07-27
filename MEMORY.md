@@ -23,8 +23,8 @@
 | **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **DONE — PR #40 merged.** ⚠️ The delegate override was NOT the real fix — see M4a. It masked the bug only because the always-visible badge window meant AppKit never saw zero visible windows. |
 | **M4a** | Finder-tag engine (`tags.rs`); delete `badges_mac.rs` + `badges.{html,js,css}` + `badges:update` + dead CG helpers + **fix the keep-alive M3 only appeared to fix** | **Mini-verified 2026-07-27 (local build, this machine).** Deleting the badge window exposed that M3's delegate override does NOT keep the app alive: reproduced that closing the last visible window logs `applicationShouldTerminateAfterLastWindowClosed -> false` and the process still dies ~1s later. Root cause = AppKit reclaiming a window-less Accessory app via the process-lifetime subsystem, which never consults that selector (tao doesn't even implement it). **Fix (verified): `lifecycle_mac::install` now also calls `NSProcessInfo disableSuddenTermination` + `disableAutomaticTermination:`.** Behavior matrix all green on the Mini: idle survives, close-last-window survives, reopen works, tray Quit exits cleanly. Tag engine = write-hygiene xattr of `_kMDItemUserTags`; pure transforms unit-tested on Windows; colour via `tag_color()` (orange) awaiting M4b. |
 | **M4b** | Shared `badge_color` setting (both OSes) + one-time first-tag notice | **macOS-verified 2026-07-27 (local build); Windows pending owner.** Branch `wip-m4b-badge-color`. One shared `badge_color` (7 names, default orange) in `settings.rs`; `badge_color_code` (mac tag code, unit-tested) + `badge_rgb` (Win dot). `tags.rs` sources the code from the setting; `set_settings` resyncs every tag on colour change (mac) and pokes `badges::wake()`/`pill::wake()` (Win). First-tag notice = one-time `Info` dialog gated by `first-tag-notice-shown` marker. Swatch picker in Settings (ring+checkmark selection, `forced-color-adjust:none`, high-contrast uses system highlight). **Mini-verified:** pick colour → every tag switches, exactly one `Nugget`, foreign tags untouched; notice fires once then never again. Windows checklist (dots + pill repaint, HC/XL) still owner-to-verify. |
-| **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | last before release |
-| — | Version bump 0.4.0 → tag → CI draft → owner publishes | |
+| **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | **Code complete on `wip-m5-finder-hover` (off #43); local build + fmt/clippy/58 tests green; owner Mini verification pending.** All in `desktop_mac.rs`. Perf gate `finder_frontmost` (`AXFocusedApplication` pid vs Finder) short-circuits `icon_at` when Finder isn't frontmost — the macOS mirror of `foreground_surface`, ~0% CPU otherwise. Desktop-vs-window routing is by **`AXWindow` in the hit chain**, not size: this is the icon-view false-trigger fix (a maximized icon-view window used to trip `covers_a_display` and mis-route to the desktop). Finder-window folder = window **`AXDocument`** (`file://` URL, percent-decoded), which follows the active tab — and Finder keeps only the active tab in the AX tree, so multi-tab resolves the front tab directly with no cursor-view guessing (better than Explorer). Hotkey: under-cursor then Finder-window selection (`AXSelectedChildren`), desktop selection fallback kept ungated. `debug_cursor_chain`/`debug_finder_tree` extended with gate/route/`AXDocument`. |
+| — | Version bump 0.4.0 → tag → CI draft → owner publishes | **Next after M5 Mini-verified: all E + M phases done, ready to package 0.4.0.** |
 
 Rules that produced this order (do not re-litigate):
 
@@ -183,5 +183,20 @@ Rules that produced this order (do not re-litigate):
 - Finder's desktop AX shape has no `AXWindow`: app → display-sized `AXScrollArea` →
   `AXGroup` → items. Walk down through display-sized containers; never hard-code depth
   (details in the `desktop_mac.rs` header).
+- **(M5) Desktop vs Finder browser window = `AXWindow` in the hit chain, NOT window
+  size.** The desktop has no `AXWindow`; a browser window is one. The old `covers_a_display`
+  test on the hit chain read a *maximized* icon-view window as the desktop and fired the
+  panel over the empty space between icons — the M5 false-trigger bug. Route by role; keep
+  size only for locating the desktop's own enumeration container.
+- **(M5) A Finder browser window's current folder = its `AXDocument`** (`file://` URL,
+  percent-decode it). It follows the **active tab**, and Finder keeps only the active tab
+  in the AX tree, so a multi-tab window needs no cursor-in-view disambiguation — the
+  opposite of Explorer, where each tab is a live HWND you must pick by cursor. This is the
+  one spot macOS AX is simpler than the Win32 shell chain.
+- **(M5) Perf gate = frontmost app is Finder** (`AXFocusedApplication` pid vs Finder's),
+  mirroring Windows' `foreground_surface`. Consequence to state to the owner: macOS desktop
+  hover now only fires while the desktop is actually foreground (Finder frontmost, no key
+  window) — same posture as Windows needing `Progman` foreground, and the reason idle CPU is
+  ~0 when another app is in front.
 - Idle release (destroy/recreate the overlay) is Windows-only — it exists for WebView2's
   process tree, which WKWebView does not have.
