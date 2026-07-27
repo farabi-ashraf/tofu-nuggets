@@ -3,8 +3,6 @@
 mod appstate;
 #[cfg(windows)]
 mod badges;
-#[cfg(target_os = "macos")]
-mod badges_mac;
 #[cfg(windows)]
 mod desktop;
 #[cfg(target_os = "macos")]
@@ -26,6 +24,10 @@ mod pill;
 mod roots;
 mod settings;
 mod storage;
+// Compiled off-macOS only so its pure tag-array transforms can be unit-tested
+// on the Windows dev machine; the xattr syscalls inside are macOS-gated.
+#[cfg(any(target_os = "macos", test))]
+mod tags;
 mod tray;
 mod updater;
 mod watcher;
@@ -161,10 +163,30 @@ fn main() {
             // The watcher stays desktop-only on purpose: watching every folder
             // a note was ever made in is what the perf budget rules out.
             watcher::spawn(roots, idx.clone());
-            app.manage(idx);
+            app.manage(idx.clone());
 
             let settings: settings::Shared = Arc::new(Mutex::new(settings::load(app.handle())));
             app.manage(settings.clone());
+
+            // macOS badges are Finder tags (D3): resync them from the index —
+            // itself just rebuilt from the sidecars — so drift left by a
+            // third-party tag manager (or a note deleted while the app was
+            // closed) self-heals at startup. One xattr syscall per note, off the
+            // main thread. Honors the badges-off setting (strip instead of tag).
+            #[cfg(target_os = "macos")]
+            {
+                let app2 = app.handle().clone();
+                let want_tagged = settings.lock().map(|s| s.badges).unwrap_or(true);
+                let paths: Vec<std::path::PathBuf> = idx
+                    .lock()
+                    .ok()
+                    .and_then(|i| i.all().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|e| std::path::PathBuf::from(e.path))
+                    .collect();
+                std::thread::spawn(move || tags::resync(&app2, paths, want_tagged));
+            }
 
             // Hotkey comes from settings; a failed registration (clash with
             // another app) must not kill the app — the user can pick a
@@ -185,8 +207,6 @@ fn main() {
                 badges::spawn(paused.clone(), settings.clone());
                 pill::spawn(app.handle().clone(), paused, settings);
             }
-            #[cfg(target_os = "macos")]
-            badges_mac::spawn(app.handle().clone(), paused, settings);
 
             tray::build(app.handle())?;
 

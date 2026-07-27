@@ -92,13 +92,16 @@ Follow-up: the editor window currently persists once created (~380 MB WebView2).
 ### Tray, pause, autostart (Milestone 5)
 
 - `tray.rs`: tray icon + menu (Open / Pause hover / Start with Windows / Quit). Left-click opens the main window.
-- Pause: a shared `Paused` (`AtomicBool` in `appstate.rs`) checked by the hover engine (hides panel, skips detection) and the badge layer (hides badges). Toggled from the tray.
+- Pause: a shared `Paused` (`AtomicBool` in `appstate.rs`) checked by the hover engine (hides panel, skips detection) and, on Windows, the badge layer (hides dots). On macOS pause affects hover only — the badges are Finder tags Finder draws, so they stay. Toggled from the tray.
 - Autostart: `tauri-plugin-autostart` (registry Run key), toggled from the tray; state read back to check the menu item.
 - Background app: no window at startup; `RunEvent::ExitRequested` already prevents exit when windows close (added in M2 for idle release), so closing the main window leaves the app in the tray.
 
-### 6. Badge layer (visual cue for tagged icons)
+### 6. Badge (visual cue for annotated icons)
 
-Small dot/glyph on a corner of each tagged icon so users spot annotated items at a glance.
+Small dot on a corner of each annotated icon so users spot them at a glance. The
+two platforms reach it by completely different mechanisms.
+
+#### Windows — our own badge layer
 
 - One full-desktop, click-through layered TOPMOST window (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`), per-pixel alpha via `UpdateLayeredWindow`, drawn natively (GDI) — no webview involved, near-zero cost between redraws.
 - Badge positions come from tagged icons' bounding rects (UIA).
@@ -106,6 +109,34 @@ Small dot/glyph on a corner of each tagged icon so users spot annotated items at
 - Rejected (0.1.1 A2 spike, `spikes/badge-reparent`): reparenting the layer into the desktop z-band (Progman/`SHELLDLL_DefView`) — Win11 26200 does not composite foreign windows there (layered/child/shaped windows never render; plain ones only erratically).
 - Settings: toggle on/off, badge corner, badge size (tied to accessibility scale).
 - Rejected: `IShellIconOverlayIdentifier` shell overlays — only 15 system-wide slots (Dropbox/OneDrive contention), requires shell extension, affects Explorer too.
+
+#### macOS — Finder tags (D3, M4a)
+
+macOS draws no window of ours. The app writes a Finder tag named **`Nugget`** to
+each annotated file's `com.apple.metadata:_kMDItemUserTags` xattr (`tags.rs`), and
+Finder draws (and occludes) the dot itself — on the Desktop *and* inside every
+Finder window, at every zoom, through every reshuffle. So macOS has **no overlay
+window, no pill, no occlusion pass, and no per-tick UIA/CG walk** for badges; the
+badge half of the file-manager update costs nothing to draw there. The old
+transparent webview badge layer (`badges_mac.rs`, PRs #25/#26) is deleted.
+
+- Sidecars stay the source of truth; the tag is a derived cue. It is written when
+  a note is saved, removed when a note is deleted or emptied, and resynced from
+  the index (itself rebuilt from sidecars) at startup so third-party drift heals.
+- The tag xattr is a binary-plist array of `"Name\nColorCode"` strings. **Identity
+  is the name**, so write hygiene is mandatory: read-modify-write immediately
+  before writing, preserve every foreign entry verbatim, abort and write nothing
+  if the payload is not a plist array of strings, and no-op when already correct
+  (tags sync via iCloud/Dropbox — pointless writes cost the user traffic). Pure
+  transforms unit-tested on every platform; the xattr syscalls are macOS-only.
+- Colour comes from the shared cross-platform `badge_color` setting (default
+  orange), so Windows and macOS honour one control.
+- **Rejected: `FIFinderSync` extension.** The "official" API, but it needs an
+  Xcode appex target the Tauri bundler cannot embed, a custom CI codesign path, a
+  user visit to System Settings to enable it, and has unverified interactions with
+  ad-hoc signing. Revisit if tags prove insufficient or an Apple Developer account
+  is bought. Shell icon overlays have no macOS analogue we use either — tags are
+  the whole mechanism.
 
 ### 7. Explorer pill + dots (E2/E3, Windows)
 
@@ -230,9 +261,12 @@ so a partial/old file backfills from defaults rather than failing to load.
   `prefers-contrast: more`, `forced-colors: active`). So the OS setting is honored
   and the toggle can additionally force it on. High contrast drops the translucent
   glass for solid colors (`--panel-bg: #000` / `#fff`, opaque border).
-- **Badge toggle**: `settings.badges`, read by the badge layer each 2 s refresh;
-  when off the layer hides but infotip suppression keeps running (the panel must
-  stay the sole hover surface even with dots off).
+- **Badge toggle**: `settings.badges`. Windows: read by the badge layer each 2 s
+  refresh; when off the layer hides but infotip suppression keeps running (the
+  panel must stay the sole hover surface even with dots off). macOS: toggling it
+  strips our Finder tag from every annotated file (and re-adds it when switched
+  back on) — Finder has no live flag to read, so the state change is a one-shot
+  resync (`tags::resync`).
 - **Settings window**: opened from the tray (`Settings…`), same build path as the
   main window; itself imports `theme.js` so it previews changes live.
 - **Keyboard access**: global hotkey flow means notes are creatable/editable
