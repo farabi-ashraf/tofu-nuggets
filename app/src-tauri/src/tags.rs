@@ -8,8 +8,11 @@
 //! The tag lives in the `com.apple.metadata:_kMDItemUserTags` xattr as a BINARY
 //! plist array of `"Name\nColorCode"` strings (`0` none, `1` gray, `2` green,
 //! `3` purple, `4` blue, `5` yellow, `6` red, `7` orange). **Identity is the
-//! name** — `Nugget` — not the colour; the colour is user-selectable (M4b), read
-//! here through one helper (`tag_color`) so M4b only swaps its source.
+//! name** — `Nugget` — not the colour; the colour is the user's shared
+//! `badge_color` setting, mapped to a code by `settings::badge_color_code` and
+//! read here through `tag_color`. Changing the setting resyncs every tag
+//! (settings.rs), and the read-modify-write below drops the stale
+//! `Nugget\n<old>` before writing `Nugget\n<new>`.
 //!
 //! Write hygiene is mandatory because these are the USER's own tags sitting next
 //! to ours (MEMORY / docs/V0.4.0.md D3):
@@ -29,17 +32,6 @@
 /// Finder tag name. Distinctive on purpose: a *name* collision would mean
 /// touching a tag the user owns, far worse than a colour clash (D3).
 pub const TAG_NAME: &str = "Nugget";
-
-/// Default badge colour code (orange). M4b sources this from the shared
-/// `badge_color` setting; until then it is the one constant to change.
-#[cfg(target_os = "macos")]
-const DEFAULT_COLOR: u8 = 7;
-
-/// The colour code our tag is written with. The single source M4b will swap.
-#[cfg(target_os = "macos")]
-pub fn tag_color() -> u8 {
-    DEFAULT_COLOR
-}
 
 /// True when `entry` is one of ours — identity is the name, with or without a
 /// colour suffix (`"Nugget"` or `"Nugget\n<code>"`).
@@ -98,10 +90,22 @@ mod imp {
 
     use tauri::AppHandle;
 
-    use super::{parse_entries, serialize_entries, tag_color, with_tag, without_tag};
+    use tauri::Manager;
+
+    use super::{parse_entries, serialize_entries, with_tag, without_tag};
     use crate::logfile;
 
     const XATTR: &str = "com.apple.metadata:_kMDItemUserTags";
+
+    /// The colour code the tag is written with, from the shared `badge_color`
+    /// setting. Defaults to orange when the state is unreadable.
+    fn tag_color(app: &AppHandle) -> u8 {
+        let name = app
+            .try_state::<crate::settings::Shared>()
+            .and_then(|s| s.lock().ok().map(|g| g.badge_color.clone()))
+            .unwrap_or_else(|| crate::settings::DEFAULT_BADGE_COLOR.to_string());
+        crate::settings::badge_color_code(&name)
+    }
 
     /// Current tags, or `Err(())` = abort: the attr could not be read or held
     /// something that is not a plist array of strings. A missing attr is not an
@@ -131,7 +135,12 @@ mod imp {
 
     /// Read-modify-write with the mandated hygiene. `f` returns the new array or
     /// `None` for "already correct". Any read/parse failure aborts the write.
-    fn update(app: &AppHandle, path: &Path, f: impl FnOnce(&[String]) -> Option<Vec<String>>) {
+    /// Returns `true` only when it actually wrote the xattr.
+    fn update(
+        app: &AppHandle,
+        path: &Path,
+        f: impl FnOnce(&[String]) -> Option<Vec<String>>,
+    ) -> bool {
         let cur = match read_current(path) {
             Ok(c) => c,
             Err(()) => {
@@ -142,25 +151,79 @@ mod imp {
                         path.display()
                     ),
                 );
-                return;
+                return false;
             }
         };
         let Some(next) = f(&cur) else {
-            return; // already correct — no sync-costing write
+            return false; // already correct — no sync-costing write
         };
-        if let Err(e) = write_current(path, &next) {
-            logfile::log(app, &format!("tags: write failed {}: {e}", path.display()));
+        match write_current(path, &next) {
+            Ok(()) => true,
+            Err(e) => {
+                logfile::log(app, &format!("tags: write failed {}: {e}", path.display()));
+                false
+            }
         }
     }
 
-    /// Add/refresh our tag on `path` (note saved).
+    /// Add/refresh our tag on `path` (note saved). Shows the one-time first-tag
+    /// notice the first time a `Nugget` tag is actually written on this profile.
     pub fn set_note_tag(app: &AppHandle, path: &Path) {
-        update(app, path, |cur| with_tag(cur, tag_color()));
+        let code = tag_color(app);
+        if update(app, path, |cur| with_tag(cur, code)) {
+            maybe_show_first_tag_notice(app);
+        }
     }
 
     /// Remove our tag from `path` (note deleted, or emptied).
     pub fn clear_note_tag(app: &AppHandle, path: &Path) {
-        update(app, path, without_tag);
+        let _ = update(app, path, without_tag);
+    }
+
+    /// Marker file recording that the first-tag notice has been shown, so it
+    /// never shows again. A dedicated file (not a settings field) keeps it out
+    /// of the settings the UI round-trips.
+    fn first_tag_notice_marker(app: &AppHandle) -> Option<PathBuf> {
+        Some(
+            crate::paths::data_dir(app)
+                .ok()?
+                .join("first-tag-notice-shown"),
+        )
+    }
+
+    /// One time, the first time a `Nugget` tag is written on this profile, tell
+    /// the user their annotated files now carry a Finder tag and where to change
+    /// its colour. WKWebView has no `alert`/`confirm`, so this uses the native
+    /// dialog plugin (as `updater.rs` does), on a detached thread so tagging is
+    /// never blocked. The marker is written *before* showing, so a bulk resync
+    /// (many `set_note_tag` calls in a row) still shows it at most once.
+    fn maybe_show_first_tag_notice(app: &AppHandle) {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+        let Some(marker) = first_tag_notice_marker(app) else {
+            return;
+        };
+        if marker.exists() {
+            return;
+        }
+        if std::fs::write(&marker, b"").is_err() {
+            // Could not persist the flag — skip rather than risk showing it on
+            // every tag from now on.
+            return;
+        }
+        logfile::log(app, "tags: showing first-tag notice (once)");
+        let app = app.clone();
+        std::thread::spawn(move || {
+            app.dialog()
+                .message(
+                    "Files with notes now get the macOS tag \u{201C}Nugget\u{201D}, so Finder \
+                     shows a coloured dot next to them on the Desktop and in every Finder \
+                     window. You can change the dot colour — or turn it off — in Settings.",
+                )
+                .title("Your notes now tag their files")
+                .kind(MessageDialogKind::Info)
+                .blocking_show();
+        });
     }
 
     /// Bulk resync: tag or untag every annotated item. Used at startup (from the

@@ -45,8 +45,9 @@ const BADGE_R: i32 = 6; // radius in px
 /// Gap kept between the layer window and every virtual-screen edge, so the
 /// window never exactly covers a monitor (see the module header).
 const EDGE_INSET: i32 = 1;
-// Warm accent, premultiplied at full alpha below.
-const BADGE_RGBA: (u8, u8, u8, u8) = (0xF5, 0x8F, 0x3C, 0xE6);
+/// Dot opacity (~0.9). The RGB comes from the shared `badge_color` setting; only
+/// the alpha is fixed. Kept in sync with the Explorer pill dot (pill.rs).
+const BADGE_ALPHA: u8 = 0xE6;
 
 /// Badge window handle for the WinEvent callbacks (single instance).
 static BADGE_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -81,6 +82,35 @@ struct Ctx {
     /// The subset actually drawn last push (post-occlusion); repaints are
     /// skipped while this is unchanged.
     drawn: Vec<(i32, i32)>,
+    /// Dot RGB of the last push. A `badge_color` change leaves the dot set in
+    /// place, so it is part of the "already drawn, skip repaint" test.
+    drawn_rgb: (u8, u8, u8),
+}
+
+/// Current dot RGB from the shared `badge_color` setting.
+fn badge_rgb(ctx: &Ctx) -> (u8, u8, u8) {
+    let name = ctx
+        .settings
+        .lock()
+        .map(|s| s.badge_color.clone())
+        .unwrap_or_else(|_| settings::DEFAULT_BADGE_COLOR.to_string());
+    settings::badge_rgb(&name)
+}
+
+/// Force a repaint from another thread (e.g. the badge colour changed): arm the
+/// coalescing timer on the layer window so the next message loop tick re-pushes.
+pub fn wake() {
+    let badge = BADGE_HWND.load(Ordering::Acquire);
+    if badge != 0 {
+        unsafe {
+            SetTimer(
+                Some(HWND(badge as *mut core::ffi::c_void)),
+                EVENT_TIMER_ID,
+                EVENT_DELAY_MS,
+                None,
+            );
+        }
+    }
 }
 
 fn run(uia: DesktopUia, paused: Paused, settings: settings::Shared) -> Result<()> {
@@ -120,6 +150,7 @@ fn run(uia: DesktopUia, paused: Paused, settings: settings::Shared) -> Result<()
             settings,
             badged: Vec::new(),
             drawn: Vec::new(),
+            drawn_rgb: (0, 0, 0),
         }));
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
 
@@ -415,13 +446,14 @@ fn occlusion_pass(hwnd: HWND, ctx: &mut Ctx, occluders: &[RECT]) {
         })
         .collect();
 
-    if visible_dots == ctx.drawn && ctx.visible {
+    let rgb = badge_rgb(ctx);
+    if visible_dots == ctx.drawn && rgb == ctx.drawn_rgb && ctx.visible {
         return;
     }
-    draw(hwnd, ctx, visible_dots);
+    draw(hwnd, ctx, visible_dots, rgb);
 }
 
-fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>) {
+fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>, rgb: (u8, u8, u8)) {
     unsafe {
         let layer = layer_rect();
         let (vx, vy) = (layer.left, layer.top);
@@ -459,7 +491,7 @@ fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>) {
         px.fill(0); // fully transparent
 
         for &(cx, cy) in &dots {
-            draw_dot(px, vw, vh, cx, cy);
+            draw_dot(px, vw, vh, cx, cy, rgb);
         }
 
         let _ = UpdateLayeredWindow(
@@ -485,6 +517,7 @@ fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>) {
         ReleaseDC(None, screen_dc);
 
         ctx.drawn = dots;
+        ctx.drawn_rgb = rgb;
         if !ctx.visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             ctx.visible = true;
@@ -492,9 +525,11 @@ fn draw(hwnd: HWND, ctx: &mut Ctx, dots: Vec<(i32, i32)>) {
     }
 }
 
-/// Filled anti-aliased dot with a subtle white ring, premultiplied BGRA.
-fn draw_dot(px: &mut [u32], w: i32, h: i32, cx: i32, cy: i32) {
-    let (r8, g8, b8, a8) = BADGE_RGBA;
+/// Filled anti-aliased dot with a subtle white ring, premultiplied BGRA. `rgb`
+/// is the straight-alpha dot colour from the shared `badge_color` setting.
+fn draw_dot(px: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, rgb: (u8, u8, u8)) {
+    let (r8, g8, b8) = rgb;
+    let a8 = BADGE_ALPHA;
     let rad = BADGE_R as f32;
     for dy in -BADGE_R - 1..=BADGE_R + 1 {
         for dx in -BADGE_R - 1..=BADGE_R + 1 {

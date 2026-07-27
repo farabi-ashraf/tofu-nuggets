@@ -237,3 +237,49 @@ input[type="range"] {
   background: rgba(255, 255, 255, 0.16);
   border-radius: 4px;
 }
+
+/* Badge color swatches: seven color chips, single-select. The chip keeps its
+   own color even in forced-colors/High Contrast (forced-color-adjust: none) so
+   the picker stays usable; selection is shown by a ring + checkmark, never by
+   color alone, so it survives High Contrast and color-blindness. */
+.swatches {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.swatches button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--sw);
+  cursor: pointer;
+  forced-color-adjust: none;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.swatches button:hover {
+  transform: scale(1.08);
+}
+
+.swatches button.active {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--fg);
+}
+
+/* Checkmark on the selected chip — a non-color selection cue. */
+.swatches button.active::after {
+  content: "✓";
+  display: block;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.swatches button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
