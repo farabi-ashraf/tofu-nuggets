@@ -44,6 +44,8 @@ pub const DEFAULT_BADGE_COLOR: &str = "orange";
 /// Finder stores in `_kMDItemUserTags`). Unknown/empty names map to orange (7),
 /// matching the setting default, so a corrupt value never writes a "no colour"
 /// tag. This is the mapping `tags.rs` writes; unit-tested here (cross-platform).
+/// Only macOS (`tags.rs`) reads it; kept compiled everywhere so it type-checks.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn badge_color_code(name: &str) -> u8 {
     match name {
         "gray" => 1,
