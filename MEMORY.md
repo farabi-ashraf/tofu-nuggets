@@ -20,19 +20,22 @@
 | Phase | What | State |
 |---|---|---|
 | W1, W2, E0–E3 | Taskbar fix, small UX debts, Explorer spike + hover/hotkey + pill + dots | **DONE**, PRs #31–#39, all owner-verified on this machine |
-| **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **DONE — PR #40 merged, Mini-verified 2026-07-27** (survives new/edit-note-then-close, no stray after-sleep window, hover/Quit/updater fine). **Caveat**: the override is *installed but never yet consulted* — Mini log never showed the `-> false` line because the always-visible badge window means AppKit never sees zero visible windows (census `badges=true` at every close). See M4a. |
-| **M4a** | Finder-tag engine (`tags.rs`); delete `badges_mac.rs` + `badges.{html,js,css}` + `badges:update` + dead CG helpers | **Code complete, PR open, NOT Mini-verified. This is the REAL test of M3**: the always-visible badge window is now GONE, so the delegate override is the sole keep-alive. Mini MUST show `applicationShouldTerminateAfterLastWindowClosed -> false` + census after a new-note-then-close, and the app must survive; if it dies, M3 needs revisiting (delegate fetched too early / not consulted) before this can merge. Tag engine = write-hygiene xattr of `_kMDItemUserTags`; pure transforms unit-tested on Windows; colour via `tag_color()` (orange) awaiting M4b. |
+| **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **DONE — PR #40 merged.** ⚠️ The delegate override was NOT the real fix — see M4a. It masked the bug only because the always-visible badge window meant AppKit never saw zero visible windows. |
+| **M4a** | Finder-tag engine (`tags.rs`); delete `badges_mac.rs` + `badges.{html,js,css}` + `badges:update` + dead CG helpers + **fix the keep-alive M3 only appeared to fix** | **Mini-verified 2026-07-27 (local build, this machine).** Deleting the badge window exposed that M3's delegate override does NOT keep the app alive: reproduced that closing the last visible window logs `applicationShouldTerminateAfterLastWindowClosed -> false` and the process still dies ~1s later. Root cause = AppKit reclaiming a window-less Accessory app via the process-lifetime subsystem, which never consults that selector (tao doesn't even implement it). **Fix (verified): `lifecycle_mac::install` now also calls `NSProcessInfo disableSuddenTermination` + `disableAutomaticTermination:`.** Behavior matrix all green on the Mini: idle survives, close-last-window survives, reopen works, tray Quit exits cleanly. Tag engine = write-hygiene xattr of `_kMDItemUserTags`; pure transforms unit-tested on Windows; colour via `tag_color()` (orange) awaiting M4b. |
 | **M4b** | Shared `badge_color` setting (both OSes) + one-time first-tag notice | after M4a |
 | **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | last before release |
 | — | Version bump 0.4.0 → tag → CI draft → owner publishes | |
 
 Rules that produced this order (do not re-litigate):
 
-- **Windows work first, all of it.** macOS behavior can only be tested by the owner
-  sideloading a CI `.dmg` onto the Mac Mini, so Windows-testable work never burns a
-  Mini cycle.
-- **M3 must be Mini-verified BEFORE M4a starts** — M4a deletes the always-visible badge
-  window, which is plausibly what keeps the app alive today.
+- **macOS behavior is now verified locally on the Mac Mini via Claude** — build from
+  source (`npm run build` in `app/ui` → `cargo build`/`cargo run` in `app/src-tauri`) and
+  run the app right here. Sideloading a CI `.dmg` is no longer the verification path; it
+  remains only for owner acceptance / release-signing checks. Claude drives the build,
+  runs it, and reads `tofu.log` (and tao's stderr) directly. Windows work no longer has to
+  come first to avoid burning Mini cycles — a Mini cycle is now a local build.
+- ~~M3 must be Mini-verified BEFORE M4a starts~~ — moot: verification is now local
+  (above), and M4a is where the keep-alive was actually diagnosed and fixed.
 - **M4 is one milestone in two PRs** (Opus 4.8-Low lands bounded diffs better); one Mini
   test round can cover both.
 - **One release covering E + M3 + M4 + M5** — the platform-parity gate is now a standing
@@ -78,11 +81,14 @@ Rules that produced this order (do not re-litigate):
 
 - **CI is a compile/test gate only** (both legs on every PR). It cannot test behavior —
   the Accessibility grant needs a GUI, and hover/badges need eyes.
-- **Behavior testing = owner's M4 Mac Mini, macOS 26**, sideloading the CI `.dmg`.
-  Hardware covers macOS 26 only; 14/15 = CI compile + beta testers later.
-- **Every new build re-prompts the Accessibility grant** (ad-hoc signing keys it to the
-  signature) — so batch changes into few Mini runs, and never claim "should work" for
-  unverified macOS code.
+- **Behavior testing = local build+run on the Mac Mini (macOS 26), driven by Claude.**
+  Build from source and run in place; no CI `.dmg` sideload needed to verify behavior.
+  Hardware covers macOS 26 only; 14/15 = CI compile + beta testers later. Never claim
+  "should work" for macOS code that hasn't actually been run here.
+- **Accessibility grant**: a locally-run debug build must be granted Accessibility once
+  (System Settings → Privacy & Security → Accessibility). A rebuilt binary at the same
+  path generally keeps its grant; a CI `.dmg` re-prompts because ad-hoc signing keys the
+  grant to the signature.
 - **No Apple Developer account** (owner decision): ad-hoc signing only, no notarization,
   so first launch needs System Settings → Privacy & Security → "Open Anyway" (the old
   right-click→Open bypass is gone on 15+). The updater's own minisign signature is
@@ -154,10 +160,15 @@ Rules that produced this order (do not re-litigate):
 
 **macOS**
 
-- AppKit terminates the app when **no window is VISIBLE**, and that path skips
-  `ExitRequested` entirely — `prevent_exit`, hide-on-close and `Accessory` policy do not
-  stop it. The delegate override (M3) is the real fix; parking the panel off-screen was
-  the workaround being removed.
+- AppKit reclaims a window-less **Accessory** app, and that path skips `ExitRequested`
+  entirely — `prevent_exit`, hide-on-close and `Accessory` policy do not stop it. The
+  **real** keep-alive is `NSProcessInfo disableSuddenTermination` +
+  `disableAutomaticTermination:` (`lifecycle_mac.rs`), Mini-verified 2026-07-27. The
+  delegate override of `applicationShouldTerminateAfterLastWindowClosed:` (M3) is NOT
+  sufficient and never was — it returns NO and the process still dies on last-window
+  close; it only *looked* fixed while the always-visible badge window kept a visible
+  window around. tao doesn't implement that selector, so overriding it just re-asserts
+  AppKit's default. Parking the panel off-screen was the older workaround, removed in M4a.
 - All AppKit window calls must happen on the main thread (`run_on_main_thread`); calling
   `show`/`hide`/`set_position` from a worker is legal on Win32 and fatal here.
 - Keep everything in **points**, end to end. The `CGDisplayPixelsWide / CGDisplayBounds`
