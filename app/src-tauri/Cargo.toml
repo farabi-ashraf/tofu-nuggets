@@ -45,5 +45,11 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dwm",
 ] }
 
+# macOS-only: raw Objective-C runtime access to extend the NSApp delegate
+# (see lifecycle_mac.rs). Only the `objc2` core is needed — the one selector we
+# add is reached through `class!`/`msg_send!`/`ffi`, no AppKit bindings required.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -1,13 +1,14 @@
 # Tofu Nuggets
 
-Desktop overlay app for Windows: hover over a file/folder icon on the desktop → glassy panel shows user-written context ("nugget"). Notes are rich text (todos, links) created via global hotkey, stored as sidecar files. Current release: **0.1.3**, public repo, shipped via GitHub Releases + in-app updater.
+Desktop overlay app for Windows and macOS: hover over a file/folder icon on the desktop → glassy panel shows user-written context ("nugget"). Notes are rich text (todos, links) created via global hotkey, stored as sidecar files. Current release: **0.3.0**, public repo, shipped via GitHub Releases + in-app updater. **0.4.0 in progress** — see `docs/V0.4.0.md`.
 
 ## Key docs — read before large changes
 
 - `MEMORY.md` — session handoff: settled decisions, status, next step. **Read first in a new session.**
 - `docs/GLOSSARY.md` — terms + code map + cross-window contracts. **Entry point for finding anything; updating it is mandatory when modules/commands/events/terms change.**
 - `docs/ARCHITECTURE.md` — stack, hover detection, badge layer, performance budget, accessibility, storage design, threading rules
-- `docs/V0.1.3.md` — 0.1.1→0.1.3 release record + standing policies (one-branch rule, release process)
+- `docs/V0.1.3.md` — 0.1.1→0.1.3 release record + standing policies (one-branch rule, release process, release-notes rule, platform-parity gate)
+- `docs/V0.4.0.md` — 0.4.0 work order: what it contains, the decisions and their rationale, rejected alternatives, phase order
 - `docs/MVP.md` — original scope, explicit non-goals, milestone record
 - `docs/SECURITY.md` — secret hygiene, updater key flow, incident steps
 - `README.md` — public-facing readme; keep accurate on feature/build changes
@@ -30,7 +31,7 @@ Docs lag; code must stand alone. Standing conventions:
 
 ## Project rules
 
-- Hover scope is desktop icons (Explorer integration, sync, tags, shell extensions deliberately deferred — see `docs/MVP.md` non-goals; revisit only as an explicit owner decision).
+- Hover scope is desktop icons **plus File Explorer windows (0.4.0, shipped in code) and Finder windows (0.4.0, M5)**. Still deliberately deferred: sync and shell extensions (`docs/MVP.md` non-goals; revisit only as an explicit owner decision). macOS badges use Finder tags by decision — see `docs/V0.4.0.md` D3.
 - Sidecar files are the source of truth; the SQLite index must always be rebuildable from them. Never store note content only in the index.
 - Hover detection uses UI Automation (`ElementFromPoint`), not cross-process ListView memory reads.
 - Background app: performance budget in `docs/ARCHITECTURE.md` is a hard requirement — ~0% CPU idle, ~15–20 MB core RAM, icon count must never affect hover cost. Treat regressions as bugs.
