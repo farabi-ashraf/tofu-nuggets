@@ -1045,7 +1045,7 @@ fn draw_dots(hwnd: HWND, owner: HWND, anchor: RECT, rects: &[RECT], st: Style) -
         for it in rects {
             let cx = it.right - anchor.left - r - nudge;
             let cy = it.top - anchor.top + r + nudge;
-            draw_dot(px, w, h, cx, cy, r);
+            draw_dot(px, w, h, cx, cy, r, st.dot);
         }
 
         let ok = UpdateLayeredWindow(
@@ -1082,9 +1082,10 @@ fn draw_dots(hwnd: HWND, owner: HWND, anchor: RECT, rects: &[RECT], st: Style) -
 
 /// Anti-aliased accent dot with a white rim, premultiplied BGRA — the desktop
 /// badge dot (`badges::draw_dot`), radius-parameterized for accessibility scale.
-fn draw_dot(px: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, rad_px: i32) {
-    // Warm accent at ~0.9 alpha, matching the badge layer.
-    let (r8, g8, b8, a8) = (0xF5u32, 0x8Fu32, 0x3Cu32, 0xE6u32);
+fn draw_dot(px: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, rad_px: i32, rgb: [u8; 3]) {
+    // Dot colour from the shared `badge_color` setting, at ~0.9 alpha, matching
+    // the desktop badge layer.
+    let (r8, g8, b8, a8) = (rgb[0] as u32, rgb[1] as u32, rgb[2] as u32, 0xE6u32);
     let rad = rad_px as f32;
     let ring = (rad_px as f32 * 0.25).max(1.0);
     for dy in -rad_px - 1..=rad_px + 1 {
@@ -1139,6 +1140,10 @@ struct Style {
     dpi: u32,
     /// Font-size preset × panel scale × DPI, folded into one multiplier.
     scale_milli: u32,
+    /// Straight-alpha dot RGB. From the shared `badge_color` setting, except in
+    /// high contrast where it becomes the system highlight colour (accessibility
+    /// wins). Part of `Style` so a colour change flags a redraw via `PartialEq`.
+    dot: [u8; 3],
 }
 
 impl Style {
@@ -1152,17 +1157,26 @@ impl Style {
         };
         let dpi = unsafe { GetDpiForWindow(owner) }.max(96);
         let scale = font * s.panel_scale * (dpi as f64 / 96.0);
+        let high_contrast = s.high_contrast || system_high_contrast();
+        let dot = if high_contrast {
+            let a = sys_rgba(COLOR_HIGHLIGHT);
+            [a[0], a[1], a[2]]
+        } else {
+            let (r, g, b) = settings::badge_rgb(&s.badge_color);
+            [r, g, b]
+        };
         Style {
             dark: match s.theme.as_str() {
                 "dark" => true,
                 "light" => false,
                 _ => system_prefers_dark(),
             },
-            high_contrast: s.high_contrast || system_high_contrast(),
+            high_contrast,
             dpi,
             // Quantized so float noise can't defeat the "unchanged, skip the
             // redraw" comparison.
             scale_milli: (scale * 1000.0).round().clamp(500.0, 5000.0) as u32,
+            dot,
         }
     }
 
@@ -1485,6 +1499,7 @@ mod tests {
             high_contrast: false,
             dpi: 96,
             scale_milli: 1000,
+            dot: [0, 0, 0],
         };
         let (w, h) = (60, 24);
         let mut px = vec![0u32; (w * h) as usize];
@@ -1507,6 +1522,7 @@ mod tests {
             high_contrast: true,
             dpi: 96,
             scale_milli: 1000,
+            dot: [0, 0, 0],
         };
         let (fill, _, text, _) = st.colors();
         assert_eq!(fill[3], 0xFF);
@@ -1520,13 +1536,13 @@ mod tests {
     fn dot_is_drawn_centered_and_clips_at_edges() {
         let (w, h) = (40, 40);
         let mut px = vec![0u32; (w * h) as usize];
-        draw_dot(&mut px, w, h, 20, 20, 6);
+        draw_dot(&mut px, w, h, 20, 20, 6, [0xF5, 0x8F, 0x3C]);
         let alpha = |x: i32, y: i32| (px[(y * w + x) as usize] >> 24) & 0xFF;
         assert!(alpha(20, 20) > 128, "center of the dot is opaque");
         assert_eq!(alpha(0, 0), 0, "far corner untouched");
         // A dot centered on the edge must clip, not index out of bounds.
-        draw_dot(&mut px, w, h, 0, 0, 6);
-        draw_dot(&mut px, w, h, w - 1, h - 1, 6);
+        draw_dot(&mut px, w, h, 0, 0, 6, [0xF5, 0x8F, 0x3C]);
+        draw_dot(&mut px, w, h, w - 1, h - 1, 6, [0xF5, 0x8F, 0x3C]);
     }
 
     /// Every accessibility knob has to reach the geometry, or the pill would
@@ -1538,12 +1554,14 @@ mod tests {
             high_contrast: false,
             dpi: 96,
             scale_milli: 900,
+            dot: [0, 0, 0],
         };
         let large = Style {
             dark: true,
             high_contrast: false,
             dpi: 96,
             scale_milli: 2025, // xl (1.35) x panel scale 1.5
+            dot: [0, 0, 0],
         };
         assert!(large.px(24.0) > small.px(24.0));
         assert!(small.px(1.0) >= 1, "hairlines never round to nothing");

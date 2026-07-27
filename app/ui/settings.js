@@ -12,6 +12,13 @@ const segFont = document.getElementById("font-size");
 const segTheme = document.getElementById("theme");
 const panelScale = document.getElementById("panel-scale");
 const panelScaleVal = document.getElementById("panel-scale-val");
+const badgeColor = document.getElementById("badge-color");
+const badgeColorMsg = document.getElementById("badge-color-msg");
+// The picker is shared across platforms (one setting, one palette); the
+// explainer names the mechanism each OS actually uses.
+badgeColorMsg.textContent = IS_MAC
+  ? "Colors the Finder “Nugget” tag on files that have notes."
+  : "Colors the badge dot shown on icons that have notes.";
 const badges = document.getElementById("badges");
 const reducedMotion = document.getElementById("reduced-motion");
 const highContrast = document.getElementById("high-contrast");
@@ -36,6 +43,11 @@ function reflect() {
   }
   panelScale.value = settings.panel_scale;
   panelScaleVal.textContent = `${Number(settings.panel_scale).toFixed(2)}×`;
+  for (const b of badgeColor.children) {
+    const on = b.dataset.value === settings.badge_color;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  }
   badges.checked = settings.badges;
   reducedMotion.checked = settings.reduced_motion;
   highContrast.checked = settings.high_contrast;
@@ -79,6 +91,13 @@ panelScale.addEventListener("input", () => {
 });
 panelScale.addEventListener("change", () => {
   settings.panel_scale = parseFloat(panelScale.value);
+  commit();
+});
+
+badgeColor.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-value]");
+  if (!b) return;
+  settings.badge_color = b.dataset.value;
   commit();
 });
 

@@ -49,6 +49,9 @@ on the desktop *and* inside every Finder window, automatically. Either way, badg
 can be turned off in Settings; on macOS that removes the "Nugget" tag from your
 files (and re-adds it when you switch badges back on). The tag is visible in Get
 Info, and because tags sync via iCloud/Dropbox your badges travel between your Macs.
+Pick the badge **colour** in Settings — one of seven, shared by both platforms:
+Windows paints the dot in it, macOS colours the "Nugget" tag. The very first time
+macOS tags a file, a one-time note explains what the tag is and where to change it.
 
 **Explorer count pill** *(Windows)* — every File Explorer window shows a small glassy
 chip in the bottom-right of its file list with the number of items in that folder
@@ -64,8 +67,8 @@ lists every nugget with filter and per-row Open / Edit / Delete. The danger zone
 Settings can delete all notes at once.
 
 **Settings** — font size (S–XL), panel scale, dark/light/system theme, hotkey
-rebinding, badge toggle, autostart. Reduced Motion and High Contrast system
-settings are respected. Changes apply live.
+rebinding, badge toggle, badge colour (7 shared colours), autostart. Reduced
+Motion and High Contrast system settings are respected. Changes apply live.
 
 **Tray** — pause/resume hover detection, open main window or settings, toggle
 autostart, check for updates, quit.

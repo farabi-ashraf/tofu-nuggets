@@ -130,7 +130,18 @@ transparent webview badge layer (`badges_mac.rs`, PRs #25/#26) is deleted.
   (tags sync via iCloud/Dropbox — pointless writes cost the user traffic). Pure
   transforms unit-tested on every platform; the xattr syscalls are macOS-only.
 - Colour comes from the shared cross-platform `badge_color` setting (default
-  orange), so Windows and macOS honour one control.
+  orange), so Windows and macOS honour one control (M4b). The seven names map to
+  a Finder tag colour code (`settings::badge_color_code`, unit-tested) on macOS
+  and to an RGB (`settings::badge_rgb`) on Windows. Changing it live-recolours:
+  `set_settings` resyncs every `Nugget` tag on macOS (the read-modify-write drops
+  the stale `Nugget\n<old>` before writing `Nugget\n<new>`) and pokes the Windows
+  dot painters to repaint. An unknown name normalises back to orange.
+- **First-tag notice (macOS):** the first time a `Nugget` tag is actually
+  written on a profile, a one-time `Info` dialog (the dialog plugin, never
+  `window.alert` — WKWebView has none) tells the user their notes now tag their
+  files and where to change the colour. A marker file (`first-tag-notice-shown`)
+  makes it fire at most once, even across a bulk startup resync. No onboarding
+  screen — deliberately rejected as scope creep and a worse first launch.
 - **Rejected: `FIFinderSync` extension.** The "official" API, but it needs an
   Xcode appex target the Tauri bundler cannot embed, a custom CI codesign path, a
   user visit to System Settings to enable it, and has unverified interactions with
@@ -208,9 +219,16 @@ folder carry a note, and clicking that chip reveals the dots on demand (E3).
   and does not touch the idle budget.
 - Accessibility: font-size preset, panel scale, theme and high contrast are read
   from settings on every redraw and per-monitor DPI from the owner window; high
-  contrast switches to opaque system colors (`GetSysColor`). Reduced Motion needs
-  nothing — the pill has no animation by construction. It also respects the
-  badges on/off setting and tray Pause, both of which destroy every pill.
+  contrast switches to opaque system colors (`GetSysColor`), and the dot uses the
+  system highlight colour there instead of `badge_color` (accessibility wins).
+  Reduced Motion needs nothing — the pill has no animation by construction. It
+  also respects the badges on/off setting and tray Pause, both of which destroy
+  every pill.
+- The Settings badge-colour picker is seven swatches: selection is shown by a
+  ring **and** a checkmark (never colour alone, so it survives High Contrast and
+  colour-blindness), and each chip keeps its colour under forced-colors
+  (`forced-color-adjust: none`) so the palette stays usable. The explainer beside
+  it names the mechanism per platform (Finder tag on macOS, dot on Windows).
 
 ## Performance budget (hard requirements)
 

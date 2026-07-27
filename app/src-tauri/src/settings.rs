@@ -23,8 +23,59 @@ pub struct Settings {
     pub high_contrast: bool,
     /// Draw the badge dots on tagged icons.
     pub badges: bool,
+    /// One shared badge colour for both platforms, by name (see `BADGE_COLORS`).
+    /// Windows paints its dot in it; macOS maps it to the Finder tag colour code.
+    pub badge_color: String,
     /// Global note hotkey, tauri shortcut syntax (e.g. "ctrl+shift+n").
     pub hotkey: String,
+}
+
+/// The seven selectable badge colours, in UI (swatch) order. The stored
+/// `badge_color` is one of these names; anything else falls back to the default.
+/// Shared across platforms on purpose (platform-parity, docs/V0.1.3.md): one
+/// setting, one palette, the same choice on Windows and macOS.
+pub const BADGE_COLORS: [&str; 7] = ["gray", "green", "purple", "blue", "yellow", "red", "orange"];
+
+/// Default badge colour name — orange, the product accent.
+pub const DEFAULT_BADGE_COLOR: &str = "orange";
+
+/// macOS Finder tag colour code for a badge colour name (`0` none, `1` gray,
+/// `2` green, `3` purple, `4` blue, `5` yellow, `6` red, `7` orange — the codes
+/// Finder stores in `_kMDItemUserTags`). Unknown/empty names map to orange (7),
+/// matching the setting default, so a corrupt value never writes a "no colour"
+/// tag. This is the mapping `tags.rs` writes; unit-tested here (cross-platform).
+/// Only macOS (`tags.rs`) reads it; kept compiled everywhere so it type-checks.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn badge_color_code(name: &str) -> u8 {
+    match name {
+        "gray" => 1,
+        "green" => 2,
+        "purple" => 3,
+        "blue" => 4,
+        "yellow" => 5,
+        "red" => 6,
+        "orange" => 7,
+        _ => 7,
+    }
+}
+
+/// Straight-alpha RGB the Windows badge dot and Explorer pill dot paint for a
+/// badge colour name. Chosen to read like the matching macOS Finder tag colour
+/// so the two platforms look like one product. Unknown names map to orange (the
+/// original warm accent), matching the setting default. Only the Windows dot
+/// painters read this; kept compiled on every platform so it still type-checks.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn badge_rgb(name: &str) -> (u8, u8, u8) {
+    match name {
+        "gray" => (0x8E, 0x8E, 0x93),
+        "green" => (0x5B, 0xC2, 0x36),
+        "purple" => (0xC0, 0x6B, 0xDE),
+        "blue" => (0x3B, 0x8E, 0xF3),
+        "yellow" => (0xF4, 0xC8, 0x1F),
+        "red" => (0xF5, 0x4E, 0x4E),
+        // orange + fallback: the warm accent the app shipped with.
+        _ => (0xF5, 0x8F, 0x3C),
+    }
 }
 
 impl Default for Settings {
@@ -36,6 +87,7 @@ impl Default for Settings {
             reduced_motion: false,
             high_contrast: false,
             badges: true,
+            badge_color: DEFAULT_BADGE_COLOR.into(),
             hotkey: "ctrl+shift+n".into(),
         }
     }
@@ -45,6 +97,12 @@ impl Settings {
     /// Clamp free-form values from the UI into supported ranges.
     fn normalized(mut self) -> Self {
         self.panel_scale = self.panel_scale.clamp(1.0, 1.5);
+        // An unknown badge colour (hand-edited file, older/newer build) would
+        // otherwise paint nothing on Windows and write a "no colour" tag on
+        // macOS — snap it back to the default instead.
+        if !BADGE_COLORS.contains(&self.badge_color.as_str()) {
+            self.badge_color = DEFAULT_BADGE_COLOR.into();
+        }
         self
     }
 }
@@ -86,10 +144,10 @@ pub fn set_settings(
     let next = settings.normalized();
     // A changed hotkey must actually register before it is persisted; on
     // failure the old binding stays live and the caller gets the error.
-    let (old_hotkey, _old_badges) = state
+    let (old_hotkey, _old_badges, _old_color) = state
         .lock()
-        .map(|g| (g.hotkey.clone(), g.badges))
-        .unwrap_or_else(|_| ("ctrl+shift+n".into(), true));
+        .map(|g| (g.hotkey.clone(), g.badges, g.badge_color.clone()))
+        .unwrap_or_else(|_| ("ctrl+shift+n".into(), true, DEFAULT_BADGE_COLOR.into()));
     if next.hotkey != old_hotkey {
         crate::hotkey::reregister(&app, &old_hotkey, &next.hotkey)?;
         crate::logfile::log(&app, &format!("hotkey changed to '{}'", next.hotkey));
@@ -122,6 +180,41 @@ pub fn set_settings(
                 .collect();
             crate::tags::resync(&app2, paths, want_tagged);
         });
+    }
+
+    // macOS: a new badge colour rewrites the `Nugget` tag on every annotated
+    // file so Finder redraws the dot in the chosen colour. `set_note_tag`'s
+    // read-modify-write drops the stale `Nugget\n<old>` and writes `Nugget\n<new>`
+    // (tags.rs), so this is just a resync at the new colour. No-op when badges
+    // are off (nothing is tagged). Skipped when badges also toggled this call —
+    // that branch already resynced. Off the main thread: one xattr per note.
+    #[cfg(target_os = "macos")]
+    if next.badge_color != _old_color && next.badges && next.badges == _old_badges {
+        let app2 = app.clone();
+        let index = app
+            .state::<Arc<Mutex<crate::index::NuggetIndex>>>()
+            .inner()
+            .clone();
+        std::thread::spawn(move || {
+            let paths: Vec<std::path::PathBuf> = index
+                .lock()
+                .ok()
+                .and_then(|i| i.all().ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| std::path::PathBuf::from(e.path))
+                .collect();
+            crate::tags::resync(&app2, paths, true);
+        });
+    }
+
+    // Windows draws its dots live from the setting; a colour change moves no
+    // icons, so nudge both dot surfaces to repaint now instead of waiting for
+    // the next refresh tick.
+    #[cfg(windows)]
+    if next.badge_color != _old_color {
+        crate::badges::wake();
+        crate::pill::wake();
     }
 
     // Every window re-applies live (theme.js listener).
@@ -187,7 +280,55 @@ mod tests {
         assert!(d.badges);
         assert!(!d.reduced_motion);
         assert!(!d.high_contrast);
+        assert_eq!(d.badge_color, "orange");
         assert_eq!(d.hotkey, "ctrl+shift+n");
+    }
+
+    #[test]
+    fn badge_color_names_map_to_finder_codes() {
+        // The full palette, in the order Finder assigns its colour codes.
+        assert_eq!(badge_color_code("gray"), 1);
+        assert_eq!(badge_color_code("green"), 2);
+        assert_eq!(badge_color_code("purple"), 3);
+        assert_eq!(badge_color_code("blue"), 4);
+        assert_eq!(badge_color_code("yellow"), 5);
+        assert_eq!(badge_color_code("red"), 6);
+        assert_eq!(badge_color_code("orange"), 7);
+    }
+
+    #[test]
+    fn every_palette_name_has_a_nonzero_code() {
+        // A "no colour" (0) tag would show a dot-less grey pill in Finder —
+        // never valid for one of our colours.
+        for name in BADGE_COLORS {
+            assert_ne!(badge_color_code(name), 0, "{name} mapped to code 0");
+        }
+    }
+
+    #[test]
+    fn unknown_badge_color_falls_back_to_orange_code() {
+        assert_eq!(badge_color_code("chartreuse"), badge_color_code("orange"));
+        assert_eq!(badge_color_code(""), 7);
+    }
+
+    #[test]
+    fn unknown_badge_color_normalizes_to_default() {
+        let s = Settings {
+            badge_color: "chartreuse".into(),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(s.badge_color, "orange");
+    }
+
+    #[test]
+    fn known_badge_color_survives_normalization() {
+        let s = Settings {
+            badge_color: "blue".into(),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(s.badge_color, "blue");
     }
 
     #[test]
@@ -198,6 +339,7 @@ mod tests {
         assert_eq!(s.theme, "light");
         assert_eq!(s.font_size, "m"); // backfilled
         assert!(s.badges); // backfilled
+        assert_eq!(s.badge_color, "orange"); // backfilled
     }
 
     #[test]
@@ -239,6 +381,7 @@ mod tests {
             reduced_motion: true,
             high_contrast: true,
             badges: false,
+            badge_color: "blue".into(),
             hotkey: "ctrl+alt+j".into(),
         };
         let json = serde_json::to_string(&s).unwrap();
@@ -249,6 +392,7 @@ mod tests {
         assert!(back.reduced_motion);
         assert!(back.high_contrast);
         assert!(!back.badges);
+        assert_eq!(back.badge_color, "blue");
         assert_eq!(back.hotkey, "ctrl+alt+j");
     }
 }
