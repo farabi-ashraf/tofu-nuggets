@@ -1536,13 +1536,13 @@ mod tests {
     fn dot_is_drawn_centered_and_clips_at_edges() {
         let (w, h) = (40, 40);
         let mut px = vec![0u32; (w * h) as usize];
-        draw_dot(&mut px, w, h, 20, 20, 6);
+        draw_dot(&mut px, w, h, 20, 20, 6, [0xF5, 0x8F, 0x3C]);
         let alpha = |x: i32, y: i32| (px[(y * w + x) as usize] >> 24) & 0xFF;
         assert!(alpha(20, 20) > 128, "center of the dot is opaque");
         assert_eq!(alpha(0, 0), 0, "far corner untouched");
         // A dot centered on the edge must clip, not index out of bounds.
-        draw_dot(&mut px, w, h, 0, 0, 6);
-        draw_dot(&mut px, w, h, w - 1, h - 1, 6);
+        draw_dot(&mut px, w, h, 0, 0, 6, [0xF5, 0x8F, 0x3C]);
+        draw_dot(&mut px, w, h, w - 1, h - 1, 6, [0xF5, 0x8F, 0x3C]);
     }
 
     /// Every accessibility knob has to reach the geometry, or the pill would
@@ -1554,12 +1554,14 @@ mod tests {
             high_contrast: false,
             dpi: 96,
             scale_milli: 900,
+            dot: [0, 0, 0],
         };
         let large = Style {
             dark: true,
             high_contrast: false,
             dpi: 96,
             scale_milli: 2025, // xl (1.35) x panel scale 1.5
+            dot: [0, 0, 0],
         };
         assert!(large.px(24.0) > small.px(24.0));
         assert!(small.px(1.0) >= 1, "hairlines never round to nothing");
