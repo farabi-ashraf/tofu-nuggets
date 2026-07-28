@@ -5,7 +5,18 @@
 //! `ActivationPolicy::Accessory` (all still in place) cannot see it and cannot
 //! stop it (proved repeatedly in tofu.log: `exiting` with no `exit requested`).
 //!
-//! This module installs TWO defenses; the second is the load-bearing one:
+//! THE load-bearing fix is NOT in this module: it is `LSUIElement=true` in the
+//! bundle Info.plist (see `src-tauri/Info.plist`). Without that launch-time agent
+//! declaration, LaunchServices lifetime-manages the .app as a regular UI app and
+//! kills it when the last *visible* window goes away — and neither defense below
+//! stops that kill. Proven on the Mini (2026-07-28) by an A/B of two otherwise
+//! identical bundles: no LSUIElement dies on main-close (`exiting` in tofu.log),
+//! LSUIElement survives. The bare `target/*/tofu-nuggets` binary has no Info.plist
+//! so LaunchServices never lifetime-manages it and it survives windowless for
+//! free — which is why M4a "verified" against the bare binary yet the shipped
+//! .app (v0.4.0) still died. Verify keep-alive against the BUNDLE, not the binary.
+//!
+//! The two defenses below are kept as belt-and-suspenders, not the real fix:
 //!
 //! 1. Override the AppKit delegate callback
 //!    `applicationShouldTerminateAfterLastWindowClosed:` to return NO. This is
@@ -17,11 +28,11 @@
 //!    own default; the kill arrives through the process-lifetime subsystem,
 //!    which never consults it.
 //! 2. Opt out of automatic *and* sudden termination via `NSProcessInfo`
-//!    (`disableSuddenTermination` + `disableAutomaticTermination:`). THIS is what
-//!    actually keeps a window-less Accessory app alive — verified on the Mini:
-//!    with it, closing the last window survives; Quit (Tauri `app.exit`, a
-//!    ControlFlow exit, not `[NSApp terminate:]`) still exits cleanly. Never
-//!    re-enabled: the app is meant to outlive its windows for its whole run.
+//!    (`disableSuddenTermination` + `disableAutomaticTermination:`). M4a believed
+//!    THIS kept a window-less app alive; the belief came from testing the bare
+//!    binary (immune anyway). With `LSUIElement` in place it is redundant, but
+//!    harmless and left in: it does not fight Quit (Tauri `app.exit`, a
+//!    ControlFlow exit, not `[NSApp terminate:]`), which still exits cleanly.
 //!
 //! Tauri (via tao/winit) installs its own `NSApplication` delegate and owns that
 //! object, so we do NOT replace it — we reach into the delegate's class at
@@ -107,15 +118,11 @@ pub fn install(app: &AppHandle) {
             "delegate override: applicationShouldTerminateAfterLastWindowClosed installed",
         );
 
-        // The delegate override alone does NOT keep us alive: reproduced on the
-        // Mac Mini (2026-07-27, M4a build) that closing the last *visible*
-        // window logs `applicationShouldTerminateAfterLastWindowClosed -> false`
-        // and the process still dies ~1s later. AppKit tears a window-less
-        // Accessory app down through the process-lifetime subsystem, which never
-        // consults that selector. Opt out of automatic *and* sudden termination
-        // for the whole run so a hidden-window census of zero can't reclaim us.
-        // Never re-enabled: this app is meant to outlive its windows, and its
-        // Quit path is Tauri's `app.exit` (ControlFlow), not `[NSApp terminate:]`.
+        // Belt-and-suspenders only; the real keep-alive is `LSUIElement` in the
+        // bundle Info.plist (see this module's header). Opt out of automatic and
+        // sudden termination for the whole run. Harmless with LSUIElement present;
+        // does not fight Quit, which is Tauri's `app.exit` (ControlFlow), not
+        // `[NSApp terminate:]`.
         let pi: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
         if !pi.is_null() {
             let _: () = msg_send![pi, disableSuddenTermination];
