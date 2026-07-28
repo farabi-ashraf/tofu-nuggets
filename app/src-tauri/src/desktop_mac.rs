@@ -4,8 +4,9 @@
 //! (`AXUIElementCopyElementAtPosition`, the `ElementFromPoint` analogue)
 //! identifies the element under the cursor, on the Finder desktop **and inside
 //! Finder browser windows** (M5, mirroring the Windows Explorer work in
-//! `desktop.rs`). Display/item names resolve to paths (`icons::resolve_path`)
-//! against the desktop roots or, in a Finder window, that window's folder.
+//! `desktop.rs`). A desktop icon's name resolves to a path
+//! (`icons::resolve_path`) against the desktop roots; a Finder-window item
+//! resolves through its own `AXURL` (below).
 //!
 //! Perf gate (mirrors Windows `foreground_surface`): before any AX hit-test,
 //! `finder_frontmost` checks whether Finder is the focused application
@@ -18,19 +19,27 @@
 //!
 //! Desktop-vs-window routing is by AX *shape*, not window size. The Finder
 //! desktop has no `AXWindow` (see below); a Finder browser window is an
-//! `AXWindow`. So a hit whose ancestor chain contains an `AXWindow` is resolved
-//! against that window's folder, and one without is the desktop. This replaces
-//! the earlier display-size heuristic (`covers_a_display` on the hit chain),
-//! which mis-classified a *maximized* icon-view Finder window as the desktop and
-//! fired the panel over the empty space between its icons (M5 fix). Sizing is
-//! still used only to locate the desktop's own container for enumeration.
+//! `AXWindow`. So a hit whose ancestor chain contains an `AXWindow` is a
+//! Finder-window item, and one without is the desktop. This replaces the earlier
+//! display-size heuristic (`covers_a_display` on the hit chain), which
+//! mis-classified a *maximized* icon-view Finder window as the desktop and fired
+//! the panel over the empty space between its icons (M5 fix). Sizing is still
+//! used only to locate the desktop's own container for enumeration.
 //!
-//! Finder window folder comes from the window's `AXDocument` — a `file://` URL
-//! Finder keeps pointed at the **active tab's** folder. Finder renders only the
-//! active tab (inactive tabs are not in the AX tree), so a multi-tab window
-//! resolves the front tab directly, with no cursor-in-view disambiguation of the
-//! kind Explorer needs (there each tab is a live HWND). That is the one place
-//! macOS AX is simpler than the Win32 shell chain.
+//! A Finder-window item resolves to a path from **its own `AXURL`** (a
+//! file-reference URL, `CFURLCreateFilePathURL` → `CFURLCopyFileSystemPath`),
+//! NOT from the window's folder: the window's `AXDocument` is empty on Finder
+//! folder windows (macOS 26 hardware), and the item URL is better anyway — it
+//! names the exact file (hidden extensions need no name matching) and belongs to
+//! the active tab, since Finder keeps only the active tab in the AX tree. So a
+//! multi-tab window resolves the front tab's items directly, with none of the
+//! cursor-in-view disambiguation Explorer needs (there each tab is a live HWND).
+//! Where the URL sits varies by view — on the hit element (icon, column) or a
+//! shallow descendant (list/details: cell → text field) — so `finder_item`
+//! climbs from the hit through item-level elements, stopping at the first
+//! content container (`is_search_barrier`) so the empty space between items,
+//! which lands on a container, resolves to nothing (the icon-view false-trigger
+//! fix's second half).
 //!
 //! The element shapes here are NOT contractual — Finder exposes desktop items
 //! differently across releases, and the first attempt (exact roles, exact
@@ -116,11 +125,15 @@ mod ffi {
         pub size: CGSize,
     }
 
+    pub type CFURLRef = *const c_void;
+
     pub const kAXErrorSuccess: AXError = 0;
     // AXValue.h AXValueType: 1 = CGPoint, 2 = CGSize.
     pub const kAXValueCGPointType: u32 = 1;
     pub const kAXValueCGSizeType: u32 = 2;
     pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
+    // CFURLPathStyle: 0 = POSIX.
+    pub const kCFURLPOSIXPathStyle: CFIndex = 0;
 
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
@@ -157,6 +170,24 @@ mod ffi {
             the_type: CFIndex,
             value: *mut c_void,
         ) -> Boolean;
+        // Resolve a file-reference URL (file:///.file/id=…) to a path URL, then
+        // read its POSIX path — how a Finder item's AXURL becomes an absolute
+        // path (see `item_url_path`).
+        pub fn CFURLCreateFilePathURL(
+            alloc: CFAllocatorRef,
+            url: CFURLRef,
+            error: *mut CFTypeRef,
+        ) -> CFURLRef;
+        pub fn CFURLCopyFileSystemPath(url: CFURLRef, path_style: CFIndex) -> CFStringRef;
+        // Test-only: build a CFURL from a path, to exercise the resolve path
+        // (`cfurl_to_path`) without a live AX element.
+        #[cfg(test)]
+        pub fn CFURLCreateWithFileSystemPath(
+            alloc: CFAllocatorRef,
+            file_path: CFStringRef,
+            path_style: CFIndex,
+            is_directory: Boolean,
+        ) -> CFURLRef;
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -500,47 +531,130 @@ fn window_in_chain(elem: &CfOwned, chain: &[CfOwned]) -> Option<CfOwned> {
         .and_then(|w| retained(w.0))
 }
 
-/// Current folder of a Finder browser window, from its `AXDocument` (a `file://`
-/// URL Finder keeps pointed at the active tab's folder). `None` for a window
-/// that shows no filesystem folder (Recents, Tags, AirDrop) or has no document.
-fn finder_window_folder(win: CFTypeRef) -> Option<PathBuf> {
-    file_url_to_path(&string_attr(win, "AXDocument")?)
+/// Absolute path of a Finder item from its `AXURL`.
+///
+/// A Finder item exposes `AXURL` as a *file-reference* URL (`file:///.file/id=…`,
+/// a stable inode reference), which `CFURLCreateFilePathURL` resolves to a real
+/// path URL that `CFURLCopyFileSystemPath` reads. This is the path source for
+/// Finder windows because the *window's* `AXDocument` is empty on folder windows
+/// (macOS 26 hardware) — and the item URL is strictly better anyway: it names
+/// the exact file, so hidden extensions need no name matching, and it belongs to
+/// the active tab (only the active tab is in the AX tree). `None` for an element
+/// with no URL (containers, decorations) or a URL that does not resolve.
+fn item_url_path(elem: CFTypeRef) -> Option<PathBuf> {
+    cfurl_to_path(copy_attr(elem, "AXURL")?.0)
 }
 
-/// A `file://` URL → path, percent-decoding escapes Finder puts in `AXDocument`
-/// (spaces become `%20`, and so on). Local file URLs have an empty host —
-/// `file:///Users/x` — with an optional `localhost`.
-fn file_url_to_path(url: &str) -> Option<PathBuf> {
-    let rest = url.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    let decoded = percent_decode(rest);
-    (!decoded.is_empty()).then(|| PathBuf::from(decoded))
+/// Resolve a `CFURL` to a POSIX path. Finder item `AXURL`s are file-*reference*
+/// URLs (`file:///.file/id=…`), which `CFURLCreateFilePathURL` turns into a real
+/// path URL; a plain file URL yields null there, so fall back to reading the
+/// path straight off the original.
+fn cfurl_to_path(url: CFTypeRef) -> Option<PathBuf> {
+    let path_url = CfOwned::new(unsafe {
+        CFURLCreateFilePathURL(std::ptr::null(), url, std::ptr::null_mut())
+    });
+    let target = path_url.as_ref().map_or(url, |u| u.0);
+    let cf_path = CfOwned::new(unsafe { CFURLCopyFileSystemPath(target, kCFURLPOSIXPathStyle) })?;
+    let s = cf_string_value(cf_path.0)?;
+    (!s.is_empty()).then(|| PathBuf::from(s))
 }
 
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
-                out.push(h * 16 + l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
+/// Elements that must never be *searched* for an item URL: the content
+/// containers whose subtree holds *many* items. Stopping the climb at these (and
+/// never descending into them) is what keeps a hit on the empty space between
+/// items — which lands on one of these — from resolving to some arbitrary file.
+/// The item-level elements (`AXImage`, `AXTextField`, `AXCell`, `AXRow`, small
+/// `AXGroup`) are NOT barriers, so each is searched, and each holds one item.
+/// `AXSplitGroup` is included because a hit on the window's non-content margin
+/// lands directly on it (macOS 26 hardware).
+fn is_search_barrier(elem: CFTypeRef) -> bool {
+    matches!(
+        string_attr(elem, "AXRole").as_deref(),
+        Some("AXScrollArea")
+            | Some("AXWindow")
+            | Some("AXApplication")
+            | Some("AXList")
+            | Some("AXTable")
+            | Some("AXOutline")
+            | Some("AXBrowser")
+            | Some("AXSplitGroup")
+    ) || covers_a_display(elem)
+}
+
+/// First resolvable item URL at or under `elem` (bounded depth). Only called on
+/// non-barrier, item-sized elements, so its subtree is a single item — the URL
+/// may sit on the element itself (icon/column views) or a shallow descendant
+/// (list/details: cell → text field), and any URL found is that one item's.
+fn subtree_url(elem: CFTypeRef, depth: usize) -> Option<PathBuf> {
+    if let Some(p) = item_url_path(elem) {
+        return Some(p);
     }
-    String::from_utf8_lossy(&out).into_owned()
+    if depth == 0 {
+        return None;
+    }
+    children(elem)
+        .into_iter()
+        .find_map(|k| subtree_url(k.0, depth - 1))
 }
 
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
+/// The Finder-window item at the hit: climb from the hit through item-level
+/// elements (stopping at the first content container) and take the first whose
+/// subtree yields a resolvable `AXURL`. Climbing past the exact-column cell to
+/// the row is what lets a hit on any column of a details-view row resolve the
+/// row's file. The display name is the resolved path's file name (so it matches
+/// the real file, not a possibly extension-hidden label), and the rect is the
+/// item-scope element's frame.
+fn finder_item(hit: &CfOwned, chain: &[CfOwned]) -> Option<Icon> {
+    std::iter::once(hit)
+        .chain(chain.iter())
+        .take_while(|e| !is_search_barrier(e.0))
+        .find_map(|e| {
+            let path = subtree_url(e.0, 3)?;
+            let f = frame_pts(e.0)?;
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(Icon {
+                rect: rect_of(&f),
+                name,
+                path: Some(path),
+            })
+        })
+}
+
+/// First selected item under `elem` (hotkey selection fallback in a Finder
+/// window). Which element answers `AXSelectedChildren` varies by view, so search
+/// a few levels down; each selected child resolves through the same item-URL
+/// path as a hover hit.
+fn selected_item(elem: CFTypeRef, depth: usize) -> Option<Icon> {
+    if let Some(sel) = copy_attr(elem, "AXSelectedChildren") {
+        let found = array_items(sel.0).into_iter().find_map(|s| {
+            let path = subtree_url(s.0, 3)?;
+            let f = frame_pts(s.0)?;
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(Icon {
+                rect: rect_of(&f),
+                name,
+                path: Some(path),
+            })
+        });
+        if found.is_some() {
+            return found;
+        }
+    }
+    if depth == 0 {
+        return None;
+    }
+    children(elem)
+        .into_iter()
+        .find_map(|k| selected_item(k.0, depth - 1))
+}
+
+/// `CGRect` (points) → the portable `IconRect`.
+fn rect_of(f: &CGRect) -> IconRect {
+    IconRect {
+        left: f.origin.x.round() as i32,
+        top: f.origin.y.round() as i32,
+        right: (f.origin.x + f.size.width).round() as i32,
+        bottom: (f.origin.y + f.size.height).round() as i32,
     }
 }
 
@@ -573,22 +687,6 @@ fn item_from_hit(elem: &CfOwned, chain: &[CfOwned], dirs: &[PathBuf]) -> Option<
         path: resolve_path(&name, dirs),
         name,
     })
-}
-
-/// First selected item inside a Finder browser window, resolved against its
-/// folder (hotkey selection fallback). Which element answers
-/// `AXSelectedChildren` varies by view — the scroll area, or the
-/// outline/table/browser inside it — so search a few levels down.
-fn window_selection(win: CFTypeRef, depth: usize, dirs: &[PathBuf]) -> Option<Icon> {
-    if let Some(icon) = selection_in(win, dirs) {
-        return Some(icon);
-    }
-    if depth == 0 {
-        return None;
-    }
-    children(win)
-        .into_iter()
-        .find_map(|k| window_selection(k.0, depth - 1, dirs))
 }
 
 /// Human-readable dump of what sits under the cursor, written to the log when
@@ -631,9 +729,15 @@ pub fn debug_cursor_chain() -> Option<String> {
     let gate = matches!((fpid, finder), (Some(a), Some(b)) if a == b);
     let chain = ancestor_chain(elem.0);
     let route = match window_in_chain(&elem, &chain) {
-        Some(win) => match finder_window_folder(win.0) {
-            Some(folder) => format!("Finder window → folder {}", folder.display()),
-            None => "Finder window → no AXDocument folder (Recents/Tags/etc.?)".into(),
+        Some(_) => match finder_item(&elem, &chain) {
+            Some(icon) => format!(
+                "Finder window → item '{}' → {}",
+                icon.name,
+                icon.path
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            ),
+            None => "Finder window → no item URL under cursor (empty space?)".into(),
         },
         None if chain_is_desktop(&chain) => "desktop".into(),
         None => "neither (no AXWindow, no desktop AXScrollArea)".into(),
@@ -666,17 +770,10 @@ fn debug_finder_tree() -> String {
         let role = string_attr(win.0, "AXRole").unwrap_or_else(|| "?".into());
         let title = string_attr(win.0, "AXTitle").unwrap_or_else(|| "-".into());
         let spans = covers_a_display(win.0);
-        // AXDocument is where a Finder browser window's active-tab folder comes
-        // from; showing it (raw URL + resolved path) is how the tabs path is
-        // verified on hardware.
-        let doc = string_attr(win.0, "AXDocument")
-            .map(|u| {
-                let folder = finder_window_folder(win.0)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<unresolved>".into());
-                format!("{u} → {folder}")
-            })
-            .unwrap_or_else(|| "-".into());
+        // AXDocument is empty on Finder folder windows (macOS 26) — paths come
+        // from each item's AXURL, not the window — but show it anyway: a future
+        // OS populating it, or a document window that does, would show up here.
+        let doc = string_attr(win.0, "AXDocument").unwrap_or_else(|| "-".into());
         let kids = children(win.0)
             .iter()
             .map(|k| string_attr(k.0, "AXRole").unwrap_or_else(|| "?".into()))
@@ -734,21 +831,17 @@ impl MacIcons {
             .flatten()
     }
 
-    /// The frontmost Finder browser window and its folder, if one is focused.
-    /// The desktop is not an `AXWindow`, so when the desktop is the active
-    /// surface Finder reports no focused window (or a non-`AXWindow`) and this
-    /// returns `None` — the caller then uses the desktop selection instead.
-    fn focused_finder_window(&self) -> Option<(CfOwned, PathBuf)> {
+    /// The frontmost Finder browser window, if one is focused. The desktop is
+    /// not an `AXWindow`, so when the desktop is the active surface Finder
+    /// reports no focused window (or a non-`AXWindow`) and this returns `None` —
+    /// the caller then uses the desktop selection instead.
+    fn focused_finder_window(&self) -> Option<CfOwned> {
         if !self.finder_frontmost() {
             return None;
         }
         let app = CfOwned::new(unsafe { AXUIElementCreateApplication(finder_pid()?) })?;
         let win = copy_attr(app.0, "AXFocusedWindow")?;
-        if string_attr(win.0, "AXRole").as_deref() != Some("AXWindow") {
-            return None;
-        }
-        let folder = finder_window_folder(win.0)?;
-        Some((win, folder))
+        (string_attr(win.0, "AXRole").as_deref() == Some("AXWindow")).then_some(win)
     }
 }
 
@@ -761,14 +854,12 @@ impl DesktopIcons for MacIcons {
         let elem = self.hit(x, y)?;
         let chain = ancestor_chain(elem.0);
 
-        // Route by shape: an AXWindow ancestor = a Finder browser window
-        // (resolve against its folder); none = the desktop (resolve against the
-        // desktop roots). See the module header for why this is not a size test.
+        // Route by shape: an AXWindow ancestor = a Finder browser window (the
+        // item resolves through its own AXURL); none = the desktop (resolve the
+        // name against the desktop roots). See the module header for why this is
+        // not a size test.
         match window_in_chain(&elem, &chain) {
-            Some(win) => {
-                let folder = finder_window_folder(win.0)?;
-                item_from_hit(&elem, &chain, std::slice::from_ref(&folder))
-            }
+            Some(_) => finder_item(&elem, &chain),
             None => {
                 if !chain_is_desktop(&chain) {
                     return None;
@@ -787,12 +878,11 @@ impl DesktopIcons for MacIcons {
     }
 
     fn selected_icon(&self) -> Option<Icon> {
-        // A Finder browser window in front → its selection, resolved against its
-        // folder. Mirrors the Windows `selected_icon` Explorer branch.
-        if let Some((win, folder)) = self.focused_finder_window() {
-            if let Some(icon) =
-                window_selection(win.0, SEARCH_DEPTH + 1, std::slice::from_ref(&folder))
-            {
+        // A Finder browser window in front → its selection (each selected item
+        // resolves through its own AXURL). Mirrors the Windows `selected_icon`
+        // Explorer branch.
+        if let Some(win) = self.focused_finder_window() {
+            if let Some(icon) = selected_item(win.0, SEARCH_DEPTH + 1) {
                 return Some(icon);
             }
         }
@@ -903,65 +993,26 @@ pub fn init_thread() {}
 
 #[cfg(test)]
 mod tests {
-    use super::{file_url_to_path, percent_decode};
-    use std::path::PathBuf;
+    use super::ffi::*;
+    use super::{cf_string, cfurl_to_path, CfOwned};
 
+    /// Round-trips a real file through the same CF calls `item_url_path` uses,
+    /// pinning the CFURL FFI signatures and the resolve step. The space in the
+    /// name catches an encoding regression; ASCII-only avoids the macOS NFC/NFD
+    /// path-normalization mismatch, which is not what this test is pinning.
     #[test]
-    fn plain_file_url_becomes_path() {
-        assert_eq!(
-            file_url_to_path("file:///Users/x/Documents"),
-            Some(PathBuf::from("/Users/x/Documents"))
-        );
-    }
-
-    #[test]
-    fn trailing_slash_is_kept_but_harmless() {
-        // Finder's AXDocument on a folder ends in a slash; resolve_path reads the
-        // dir either way, so the exact trailing slash does not matter.
-        assert_eq!(
-            file_url_to_path("file:///Users/x/Documents/"),
-            Some(PathBuf::from("/Users/x/Documents/"))
-        );
-    }
-
-    #[test]
-    fn percent_escapes_are_decoded() {
-        // Spaces and other escapes Finder puts in the URL come back as bytes.
-        assert_eq!(
-            file_url_to_path("file:///Users/x/My%20Great%20Folder"),
-            Some(PathBuf::from("/Users/x/My Great Folder"))
-        );
-    }
-
-    #[test]
-    fn localhost_host_is_stripped() {
-        assert_eq!(
-            file_url_to_path("file://localhost/Users/x"),
-            Some(PathBuf::from("/Users/x"))
-        );
-    }
-
-    #[test]
-    fn non_file_scheme_is_rejected() {
-        assert_eq!(file_url_to_path("x-apple.finder:///Recents"), None);
-        assert_eq!(file_url_to_path(""), None);
-    }
-
-    #[test]
-    fn unicode_percent_bytes_round_trip() {
-        // "café" → the é is UTF-8 %C3%A9; decoding must reassemble the bytes.
-        assert_eq!(
-            file_url_to_path("file:///Users/x/caf%C3%A9"),
-            Some(PathBuf::from("/Users/x/café"))
-        );
-    }
-
-    #[test]
-    fn dangling_percent_is_left_literal() {
-        // A stray '%' with no two hex digits after it is passed through as-is
-        // rather than dropped or panicking.
-        assert_eq!(percent_decode("abc%"), "abc%");
-        assert_eq!(percent_decode("a%2"), "a%2");
-        assert_eq!(percent_decode("a%zz"), "a%zz");
+    fn cfurl_resolves_a_real_file_to_its_path() {
+        let file = std::env::temp_dir().join("tofu m5 test file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let cf_path = cf_string(file.to_str().unwrap()).unwrap();
+        let url = CfOwned::new(unsafe {
+            CFURLCreateWithFileSystemPath(std::ptr::null(), cf_path.0, kCFURLPOSIXPathStyle, 0)
+        })
+        .unwrap();
+        let got = cfurl_to_path(url.0);
+        let _ = std::fs::remove_file(&file);
+        let got = got.expect("resolves to a path");
+        assert!(got.ends_with("tofu m5 test file.txt"), "got {got:?}");
+        assert!(got.is_absolute());
     }
 }
