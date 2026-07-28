@@ -6,18 +6,18 @@
 > (`docs/V0.1.3.md`, `docs/V0.4.0.md`), *how the code works* in module `//!` headers and
 > `docs/ARCHITECTURE.md`, and blow-by-blow history in git.
 
-## Status (2026-07-27)
+## Status (2026-07-28)
 
-- **Shipped: 0.3.0** — two platforms (Windows `.exe` + arm64 `.dmg`), updater live on
-  both, published.
-- **In progress: 0.4.0** — badge-layer bug fixes + the file-manager update (works
-  inside File Explorer / Finder, not just the desktop) + small UX debts. Full work
-  order, decisions and rejected alternatives: **`docs/V0.4.0.md`**.
-- Windows side is **complete and owner-verified**. macOS is **feature-complete**: E-equivalents
-  + M3/M4a/M4b + **M5 (Finder-window hover/hotkey)** all done, M5 hardware-verified on the Mini.
-  ⚠️ M5's fix lives in `wip-m5-axurl-resolve` — PR #44 accidentally merged the wrong build (see M5 row).
+- **Shipped: 0.4.0** — published and live on both platforms (Windows `.exe` + arm64
+  `.dmg`), updater serving it. Contains the full file-manager update (notes inside File
+  Explorer + Finder, not just the desktop), macOS Finder-tag badges, shared badge colour.
+  Work order + rationale: **`docs/V0.4.0.md`**.
+- All **E + M phases done and merged** (E0–E3, M3, M4a, M4b, M5). macOS Finder work was
+  hardware-verified on this Mini. Tags in git: `v0.4.0` on `9506825`.
+- Next macOS scope is a fresh decision (see "Parked features" / MVP non-goals); no
+  in-flight release.
 
-## Next step — remaining 0.4.0 phases
+## 0.4.0 phase record (all DONE, shipped)
 
 | Phase | What | State |
 |---|---|---|
@@ -25,8 +25,8 @@
 | **M3** | objc2 override of `applicationShouldTerminateAfterLastWindowClosed` + remove panel parking | **DONE — PR #40 merged.** ⚠️ The delegate override was NOT the real fix — see M4a. It masked the bug only because the always-visible badge window meant AppKit never saw zero visible windows. |
 | **M4a** | Finder-tag engine (`tags.rs`); delete `badges_mac.rs` + `badges.{html,js,css}` + `badges:update` + dead CG helpers + **fix the keep-alive M3 only appeared to fix** | **Mini-verified 2026-07-27 (local build, this machine).** Deleting the badge window exposed that M3's delegate override does NOT keep the app alive: reproduced that closing the last visible window logs `applicationShouldTerminateAfterLastWindowClosed -> false` and the process still dies ~1s later. Root cause = AppKit reclaiming a window-less Accessory app via the process-lifetime subsystem, which never consults that selector (tao doesn't even implement it). **Fix (verified): `lifecycle_mac::install` now also calls `NSProcessInfo disableSuddenTermination` + `disableAutomaticTermination:`.** Behavior matrix all green on the Mini: idle survives, close-last-window survives, reopen works, tray Quit exits cleanly. Tag engine = write-hygiene xattr of `_kMDItemUserTags`; pure transforms unit-tested on Windows; colour via `tag_color()` (orange) awaiting M4b. |
 | **M4b** | Shared `badge_color` setting (both OSes) + one-time first-tag notice | **macOS-verified 2026-07-27 (local build); Windows pending owner.** Branch `wip-m4b-badge-color`. One shared `badge_color` (7 names, default orange) in `settings.rs`; `badge_color_code` (mac tag code, unit-tested) + `badge_rgb` (Win dot). `tags.rs` sources the code from the setting; `set_settings` resyncs every tag on colour change (mac) and pokes `badges::wake()`/`pill::wake()` (Win). First-tag notice = one-time `Info` dialog gated by `first-tag-notice-shown` marker. Swatch picker in Settings (ring+checkmark selection, `forced-color-adjust:none`, high-contrast uses system highlight). **Mini-verified:** pick colour → every tag switches, exactly one `Nugget`, foreign tags untouched; notice fires once then never again. Windows checklist (dots + pill repaint, HC/XL) still owner-to-verify. |
-| **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | **DONE — hardware-verified on the Mini this session.** ⚠️ **PR #44 merged the wrong (`AXDocument`) build** — a bad `git add` pathspec silently unstaged the rewrite, so the amend kept old content. The corrected code is in **`wip-m5-axurl-resolve`** (must merge to fix main). All in `desktop_mac.rs`. Perf gate `finder_frontmost` (`AXFocusedApplication` pid vs Finder); measured 0.0% CPU with a non-Finder app front. Routing desktop-vs-window by **`AXWindow` in hit chain**, not size — icon-view false-trigger fix (verified on a maximized window). Item path = **item `AXURL`** (CFURL-resolved); window `AXDocument` is EMPTY on folder windows (hardware finding). Only the active tab is in the AX tree → tabs resolve the front tab. Hotkey: under-cursor → `AXSelectedChildren` → desktop selection fallback. Full checklist passed live (4 views, maximized window, 2-tab window, selection fallback, hotkey-create writes sidecar+tag, desktop unregressed). |
-| — | Version bump 0.4.0 → tag → CI draft → owner publishes | **After `wip-m5-axurl-resolve` lands: all E + M phases done, ready to package 0.4.0.** |
+| **M5** | Hover + hotkey inside Finder windows; fix false triggers in icon view; Finder tabs | **DONE — merged (#45) + shipped in 0.4.0; hardware-verified on the Mini.** All in `desktop_mac.rs`. Perf gate `finder_frontmost` (`AXFocusedApplication` pid vs Finder); measured 0.0% CPU with a non-Finder app front. Routing desktop-vs-window by **`AXWindow` in hit chain**, not size — icon-view false-trigger fix (verified on a maximized window). Item path = **item `AXURL`** (CFURL-resolved); window `AXDocument` is EMPTY on folder windows (hardware finding). Only the active tab is in the AX tree → tabs resolve the front tab. Hotkey: under-cursor → `AXSelectedChildren` → desktop selection fallback. Full checklist passed live (4 views, maximized window, 2-tab window, selection fallback, hotkey-create writes sidecar+tag, desktop unregressed). ⚠️ Post-mortem: PR #44 first merged the wrong (`AXDocument`) build — a bad `git add` pathspec silently unstaged the rewrite so `--amend` kept old content; **#45 corrected it**. Guardrail: verify `git diff --cached --stat` before committing. |
+| — | Version bump 0.4.0 → tag → CI draft → owner publishes | **DONE — #46 bumped, `v0.4.0` tagged, draft built, owner published. Live.** |
 
 Rules that produced this order (do not re-litigate):
 
