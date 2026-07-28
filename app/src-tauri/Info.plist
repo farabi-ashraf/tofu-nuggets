@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Tauri merges this into the generated macOS bundle Info.plist.
+
+  LSUIElement declares Tofu Nuggets a menu-bar *agent* at launch. Without it,
+  LaunchServices lifetime-manages the bundle as a regular UI app: when the last
+  *visible* window goes away (on macOS all windows are only hidden, never
+  destroyed, so main-close or overlay-loss drops the visible count to zero) the
+  OS terminates the process. That kill is external — no Tauri ExitRequested, no
+  `exiting` log, no crash report — so the runtime keep-alive in `lifecycle_mac`
+  (delegate `applicationShouldTerminateAfterLastWindowClosed` = NO plus
+  NSProcessInfo disableSudden/AutomaticTermination) never gets to stop it.
+
+  The bare `target/*/tofu-nuggets` binary has no Info.plist, so LaunchServices
+  never lifetime-manages it and it survives windowless for free — which is why
+  the M4a fix "verified" against the bare binary yet the shipped .app still died.
+  Verify keep-alive against the BUNDLE, never the bare binary.
+
+  Runtime `setActivationPolicy(Accessory)` still runs (dock-icon suppression);
+  LSUIElement is the launch-time contract that also lets the app live windowless.
+-->
+<plist version="1.0">
+  <dict>
+    <key>LSUIElement</key>
+    <true/>
+  </dict>
+</plist>
